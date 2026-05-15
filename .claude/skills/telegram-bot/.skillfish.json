@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "telegram-bot",
+  "owner": "timequity",
+  "repo": "plugins",
+  "path": "vibe-coder/skills/telegram-bot",
+  "branch": "main",
+  "sha": "ed24a79b0e357b736186f8fc92b26fd82b93dec4",
+  "source": "manual"
+}

@@ -1,0 +1,6 @@
+services:
+  quick-predict:
+    image: quick-predict:latest
+    container_name: quick-predict
+    restart: always
+    env_file: .env
