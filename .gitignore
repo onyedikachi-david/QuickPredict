@@ -1,5 +1,31 @@
 # deps
 node_modules/
+dist/
+target/
+__pycache__/
+*.pyc
 
 # envs
 .env
+.env.*
+!.env.example
+*.key
+bot_token.txt
+
+# database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# docs (PRD and internal documents)
+docs/prd.md
+*.docx
+*prd*.md
+*PRD*.md
+
+# ide
+.idea/
+.vscode/
+.DS_Store

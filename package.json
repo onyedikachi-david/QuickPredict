@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "Telegram-native trading interface for DeepBook Predict on Sui.",
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
+    "dev": "bun run src/index.ts",
+    "dev:watch": "bun run --watch src/index.ts",
     "start": "bun src/index.ts"
   },
   "dependencies": {

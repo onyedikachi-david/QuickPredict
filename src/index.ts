@@ -5,9 +5,36 @@ import { getPath } from 'hono/utils/url';
 import { config } from "./common/config";
 import { logger } from "./helpers/logger";
 import { initializeBot } from "./bootstrap";
+import { startSettlementKeeper } from "./keeper/settler";
 
 // Init Bot
 const bot = initializeBot();
+
+// Start settlement keeper
+startSettlementKeeper(bot);
+
+// Graceful shutdown handler
+let isShuttingDown = false;
+
+async function gracefulShutdown() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  logger.info("Shutting down gracefully...");
+  
+  try {
+    await bot.stop();
+    logger.info("Bot stopped successfully");
+  } catch (error) {
+    logger.error({ error }, "Error stopping bot");
+  }
+  
+  process.exit(0);
+}
+
+// Handle shutdown signals
+process.on("SIGINT", gracefulShutdown);
+process.on("SIGTERM", gracefulShutdown);
 
 // Handle webhook or polling mode
 if (config.botMode === "webhook") {

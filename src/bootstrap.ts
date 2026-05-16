@@ -2,6 +2,8 @@ import { Bot } from "grammy";
 import { config } from "./common/config";
 import { Context, createContextConstructor } from "./common/context";
 import { homeModule } from "./modules/home/home.module";
+import { tradingModule } from "./modules/trading/trading.module";
+import { socialModule } from "./modules/social/social.module";
 import { autoChatAction } from "@grammyjs/auto-chat-action";
 import { hydrate } from "@grammyjs/hydrate";
 import { i18n, isMultipleLocales } from "./common/i18n";
@@ -12,11 +14,16 @@ import { unhandledModule } from "./modules/unhandled/unhandled.module";
 import { languageModule } from "./modules/language/language.module";
 import { sessionMiddleware } from "./middlewares/session.middleware";
 import { errorHandler } from "./common/error";
+import { initializeDatabase } from "./db/schema";
 
 export const initializeBot = () : Bot<Context> => {
 
   // Exit app if bot token not set
   if (!config.botToken) throw new Error("BOT_TOKEN is not defined");
+
+  // Initialize database
+  initializeDatabase();
+  logger.info("Database initialized");
 
   // Initialize the bot
   const bot = new Bot<Context>(config.botToken, {
@@ -39,6 +46,8 @@ export const initializeBot = () : Bot<Context> => {
 
   // Add Modules
   protectedBot.use(homeModule);
+  protectedBot.use(tradingModule);
+  protectedBot.use(socialModule);
   if (isMultipleLocales) protectedBot.use(languageModule)
   protectedBot.use(unhandledModule);
 

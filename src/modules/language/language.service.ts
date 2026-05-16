@@ -14,6 +14,8 @@ export async function selectLanguageCommand(ctx: Context) {
 }
 
 export async function changeLanguage(ctx: Context) {
+  if (!ctx.callbackQuery?.data) return;
+  
   const { code: languageCode } = changeLanguageData.unpack(ctx.callbackQuery.data);
 
   if (i18n.locales.includes(languageCode)) {

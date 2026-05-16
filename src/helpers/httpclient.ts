@@ -1,16 +1,23 @@
 import { logger } from "./logger";
 
-export class HttpClient {
-  private baseURL;
-  private defaultHeaders;
+interface RequestOptions {
+  headers?: Record<string, string>;
+  body?: unknown;
+  query?: Record<string, string | number | boolean>;
+  [key: string]: unknown;
+}
 
-  constructor(baseURL = '', defaultHeaders = {}) {
+export class HttpClient {
+  private baseURL: string;
+  private defaultHeaders: Record<string, string>;
+
+  constructor(baseURL = '', defaultHeaders: Record<string, string> = {}) {
     this.baseURL = baseURL;
     this.defaultHeaders = defaultHeaders;
   }
 
   // Helper method to make requests
-  async request(method: string, endpoint: string, options = {}) {
+  async request(method: string, endpoint: string, options: RequestOptions = {}) {
     const url = this.baseURL + endpoint;
     const { headers, body, query, ...rest } = options;
 
@@ -18,7 +25,7 @@ export class HttpClient {
     const queryString = query
       ? '?' +
         Object.entries(query)
-          .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+          .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
           .join('&')
       : '';
     
@@ -44,25 +51,25 @@ export class HttpClient {
       }
       return await response.text();
     } catch (error) {
-      logger.error(`Error during ${method} request to ${url}:`, error);
+      logger.error({ error, method, url }, `Error during ${method} request`);
       throw error;
     }
   }
 
   // Convenience methods for common HTTP verbs
-  get(endpoint: string, options = {}) {
+  get(endpoint: string, options: RequestOptions = {}) {
     return this.request('GET', endpoint, options);
   }
 
-  post(endpoint: string, options = {}) {
+  post(endpoint: string, options: RequestOptions = {}) {
     return this.request('POST', endpoint, options);
   }
 
-  put(endpoint: string, options = {}) {
+  put(endpoint: string, options: RequestOptions = {}) {
     return this.request('PUT', endpoint, options);
   }
 
-  delete(endpoint: string, options = {}) {
+  delete(endpoint: string, options: RequestOptions = {}) {
     return this.request('DELETE', endpoint, options);
   }
 }
