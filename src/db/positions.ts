@@ -8,6 +8,9 @@ export function createPosition(data: {
   expiryTs: number;
   strike: number;
   isUp: boolean;
+  positionType?: "binary" | "range";
+  lowerStrike?: number | null;
+  upperStrike?: number | null;
   notionalDusdc: number;
   premiumDusdc: number;
   impliedProb: number;
@@ -19,9 +22,10 @@ export function createPosition(data: {
   db.prepare(
     `INSERT INTO positions (
       internal_id, telegram_id, asset_symbol, oracle_id, expiry_ts,
-      strike, is_up, notional_dusdc, premium_dusdc, implied_prob,
+      strike, is_up, position_type, lower_strike, upper_strike,
+      notional_dusdc, premium_dusdc, implied_prob,
       status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`
   ).run(
     internalId,
     data.telegramId,
@@ -30,6 +34,9 @@ export function createPosition(data: {
     data.expiryTs,
     data.strike,
     data.isUp ? 1 : 0,
+    data.positionType || "binary",
+    data.lowerStrike ?? null,
+    data.upperStrike ?? null,
     data.notionalDusdc,
     data.premiumDusdc,
     data.impliedProb,
@@ -39,6 +46,13 @@ export function createPosition(data: {
   return db
     .prepare("SELECT * FROM positions WHERE internal_id = ?")
     .get(internalId) as Position;
+}
+
+export function getPositionById(internalId: string): Position | undefined {
+  const db = getDatabase();
+  return db
+    .prepare("SELECT * FROM positions WHERE internal_id = ?")
+    .get(internalId) as Position | undefined;
 }
 
 export function getUserPositions(

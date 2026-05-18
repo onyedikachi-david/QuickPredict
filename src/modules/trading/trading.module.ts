@@ -11,7 +11,10 @@ import {
   rangeCommand,
   confirmTradeCallback,
   cancelTradeCallback,
+  confirmCopyCallback,
+  skipCopyCallback,
 } from "./trading.service";
+import { walletCommand } from "./wallet.service";
 
 const composer = new Composer<Context>();
 
@@ -58,9 +61,18 @@ composer.command(
   rangeCommand
 );
 
+composer.command(
+  "wallet",
+  handleLogMiddleware("wallet-command"),
+  chatAction("typing"),
+  walletCommand
+);
+
 // Callback handlers
 composer.callbackQuery(/^confirm_trade_/, confirmTradeCallback);
 composer.callbackQuery(/^cancel_trade_/, cancelTradeCallback);
+composer.callbackQuery(/^copy_confirm_/, confirmCopyCallback);
+composer.callbackQuery(/^copy_skip_/, skipCopyCallback);
 
 // Quick action callbacks
 composer.callbackQuery("cmd_status", async (ctx) => {

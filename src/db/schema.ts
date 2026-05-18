@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { logger } from "../helpers/logger";
+import { runMigrations } from "./migrations";
 
 export interface User {
   telegram_id: string;
@@ -22,6 +23,9 @@ export interface Position {
   expiry_ts: number;
   strike: number;
   is_up: number;
+  position_type: "binary" | "range";
+  lower_strike: number | null;
+  upper_strike: number | null;
   notional_dusdc: number;
   premium_dusdc: number;
   implied_prob: number;
@@ -74,6 +78,18 @@ export interface Transaction {
   created_at: number;
 }
 
+export interface UserWallet {
+  telegram_id: string;
+  sui_address: string;
+  encrypted_private_key: string;
+  salt: string;
+  iv: string;
+  auth_tag: string;
+  kdf: string;
+  created_at: number;
+  updated_at: number;
+}
+
 let db: Database | null = null;
 
 export function initializeDatabase(dbPath: string = "./quick-predict.db"): Database {
@@ -85,6 +101,7 @@ export function initializeDatabase(dbPath: string = "./quick-predict.db"): Datab
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 5000"); // Wait up to 5 seconds if database is locked
   db.exec("PRAGMA synchronous = NORMAL");
+  db.exec("PRAGMA foreign_keys = ON");
 
   // Create tables
   db.exec(`
@@ -109,6 +126,9 @@ export function initializeDatabase(dbPath: string = "./quick-predict.db"): Datab
       expiry_ts INTEGER NOT NULL,
       strike INTEGER NOT NULL,
       is_up INTEGER NOT NULL,
+      position_type TEXT NOT NULL DEFAULT 'binary',
+      lower_strike INTEGER,
+      upper_strike INTEGER,
       notional_dusdc INTEGER NOT NULL,
       premium_dusdc INTEGER NOT NULL,
       implied_prob REAL NOT NULL,
@@ -171,6 +191,19 @@ export function initializeDatabase(dbPath: string = "./quick-predict.db"): Datab
       FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
     );
 
+    CREATE TABLE IF NOT EXISTS user_wallets (
+      telegram_id TEXT PRIMARY KEY,
+      sui_address TEXT NOT NULL UNIQUE,
+      encrypted_private_key TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      auth_tag TEXT NOT NULL,
+      kdf TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_positions_telegram_id ON positions(telegram_id);
     CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
     CREATE INDEX IF NOT EXISTS idx_positions_expiry ON positions(expiry_ts);
@@ -178,7 +211,10 @@ export function initializeDatabase(dbPath: string = "./quick-predict.db"): Datab
     CREATE INDEX IF NOT EXISTS idx_copy_follows_leader ON copy_follows(leader_id);
     CREATE INDEX IF NOT EXISTS idx_tournaments_group ON tournaments(group_id);
     CREATE INDEX IF NOT EXISTS idx_user_groups_group ON user_groups(group_id);
+    CREATE INDEX IF NOT EXISTS idx_user_wallets_sui_address ON user_wallets(sui_address);
   `);
+
+  runMigrations(db);
 
   logger.info("Database initialized successfully");
   return db;

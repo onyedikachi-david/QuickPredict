@@ -46,10 +46,18 @@ async function checkAndSettlePositions(bot: Bot<Context>) {
 
       // Determine if position won
       let won = false;
-      if (position.is_up) {
-        won = settlementPrice > position.strike;
+      if (position.position_type === "range") {
+        // Range position: wins if settlement price is between lower and upper strikes
+        const lowerStrike = position.lower_strike ?? position.strike;
+        const upperStrike = position.upper_strike ?? position.strike;
+        won = settlementPrice > lowerStrike && settlementPrice <= upperStrike;
       } else {
-        won = settlementPrice < position.strike;
+        // Binary position: standard up/down logic
+        if (position.is_up) {
+          won = settlementPrice > position.strike;
+        } else {
+          won = settlementPrice < position.strike;
+        }
       }
 
       // Settle position
@@ -102,8 +110,18 @@ async function sendSettlementNotification(
   netPnl: number
 ) {
   try {
-    const direction = position.is_up ? "above" : "below";
     const checkmark = won ? "✓" : "✗";
+    
+    // Format position description
+    let positionDescription: string;
+    if (position.position_type === "range") {
+      const lowerStrike = position.lower_strike ?? position.strike;
+      const upperStrike = position.upper_strike ?? position.strike;
+      positionDescription = `${position.asset_symbol} between $${formatPrice(lowerStrike)} and $${formatPrice(upperStrike)}`;
+    } else {
+      const direction = position.is_up ? "above" : "below";
+      positionDescription = `${position.asset_symbol} ${direction} $${formatPrice(position.strike)}`;
+    }
 
     // Get updated user balance
     const db = getDatabase();
@@ -117,7 +135,7 @@ async function sendSettlementNotification(
       message =
         `🎉 <b>You won!</b>\n\n` +
         `${position.asset_symbol} settled at $${formatPrice(settlementPrice)}\n` +
-        `Your call: ${position.asset_symbol} ${direction} $${formatPrice(position.strike)} ${checkmark}\n\n` +
+        `Your call: ${positionDescription} ${checkmark}\n\n` +
         `Premium paid:      ${formatDusdc(position.premium_dusdc)} dUSDC\n` +
         `Payout:           ${formatDusdc(position.notional_dusdc)} dUSDC\n` +
         `Net profit:       +${formatDusdc(netPnl)} dUSDC\n\n` +
@@ -130,7 +148,7 @@ async function sendSettlementNotification(
       message =
         `😔 <b>Position expired worthless</b>\n\n` +
         `${position.asset_symbol} settled at $${formatPrice(settlementPrice)}\n` +
-        `Your call: ${position.asset_symbol} ${direction} $${formatPrice(position.strike)} ${checkmark}\n\n` +
+        `Your call: ${positionDescription} ${checkmark}\n\n` +
         `Premium lost: ${formatDusdc(position.premium_dusdc)} dUSDC\n\n` +
         `Balance: ${formatDusdc(user.dusdc_balance)} dUSDC`;
     }

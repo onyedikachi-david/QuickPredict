@@ -14,6 +14,7 @@ bot_token.txt
 
 # database
 *.db
+*.db.backup.*
 *.db-shm
 *.db-wal
 *.sqlite

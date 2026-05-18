@@ -51,6 +51,41 @@ export function calculatePremium(
   };
 }
 
+export function calculateRangePremium(
+  lowerStrike: number,
+  upperStrike: number,
+  currentPrice: number,
+  minutesToExpiry: number,
+  notional: number
+): PricePreview {
+  const lowerProbability = calculatePremium(
+    lowerStrike,
+    currentPrice,
+    minutesToExpiry,
+    notional,
+    true
+  ).implied_prob;
+  const upperProbability = calculatePremium(
+    upperStrike,
+    currentPrice,
+    minutesToExpiry,
+    notional,
+    true
+  ).implied_prob;
+  const impliedProb = Math.max(
+    0.05,
+    Math.min(0.95, lowerProbability - upperProbability)
+  );
+  const premiumDusdc = Math.floor(impliedProb * notional);
+
+  return {
+    premium_dusdc: premiumDusdc,
+    notional_dusdc: notional,
+    net_if_correct: notional - premiumDusdc,
+    implied_prob: impliedProb,
+  };
+}
+
 export function formatDusdc(amount: number): string {
   return (amount / 1_000_000).toFixed(2);
 }
