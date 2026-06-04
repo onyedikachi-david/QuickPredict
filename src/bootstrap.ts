@@ -16,6 +16,15 @@ import { sessionMiddleware } from "./middlewares/session.middleware";
 import { errorHandler } from "./common/error";
 import { initializeDatabase } from "./db/schema";
 
+// Premium grammY plugins
+import { autoRetry } from "@grammyjs/auto-retry";
+import { apiThrottler } from "@grammyjs/transformer-throttler";
+import { limit } from "@grammyjs/ratelimiter";
+import { conversations, createConversation } from "@grammyjs/conversations";
+import { signTransactionConversation } from "./modules/trading/trading.service";
+import { unlockWalletConversation, withdrawConversation } from "./modules/trading/wallet.service";
+import { swapConversation } from "./modules/trading/swap.service";
+
 export const initializeBot = () : Bot<Context> => {
 
   // Exit app if bot token not set
@@ -30,11 +39,27 @@ export const initializeBot = () : Bot<Context> => {
     ContextConstructor: createContextConstructor({ logger, config }),
   });
 
-  // Bot Configs
+  // Outgoing API Throttling & Auto-Retry for Premium Web3 Resilience
+  bot.api.config.use(autoRetry());
+  bot.api.config.use(apiThrottler());
+
+  // Global HTML parse mode configurations
   bot.api.config.use((prev, method, payload, signal) =>
     prev(method, { parse_mode: "HTML", ...payload }, signal)
   );
+  
   const protectedBot = bot.errorBoundary(errorHandler)
+
+  // Rate Limiting (limit to 3 requests per second per user to shield RPC/AI budgets)
+  protectedBot.use(
+    limit({
+      timeFrame: 1000,
+      limit: 3,
+      onLimitExceeded: async (ctx) => {
+        await ctx.reply("⚠️ Too many requests! Please slow down.");
+      },
+    })
+  );
 
   // Use the middleware
   if (config.botMode === "polling") protectedBot.use(sequentialize((ctx) => ctx.chatId?.toString()))
@@ -44,6 +69,13 @@ export const initializeBot = () : Bot<Context> => {
   protectedBot.use(sessionMiddleware());
   protectedBot.use(i18n);
 
+  // Register Conversation Wizards (Conversations must sit after Session middleware)
+  protectedBot.use(conversations());
+  protectedBot.use(createConversation(signTransactionConversation));
+  protectedBot.use(createConversation(unlockWalletConversation));
+  protectedBot.use(createConversation(withdrawConversation));
+  protectedBot.use(createConversation(swapConversation));
+
   // Add Modules
   protectedBot.use(homeModule);
   protectedBot.use(tradingModule);
@@ -51,6 +83,24 @@ export const initializeBot = () : Bot<Context> => {
   if (isMultipleLocales) protectedBot.use(languageModule)
   protectedBot.use(unhandledModule);
 
-  return bot
+  // Register commands for autocomplete menu in Telegram client
+  bot.api.setMyCommands([
+    { command: "start", description: "Start the bot & show overview" },
+    { command: "wallet", description: "Manage Sui non-custodial wallet" },
+    { command: "withdraw", description: "Withdraw SUI or dUSDC to an external address" },
+    { command: "swap", description: "Swap between SUI and dUSDC using DeepBook V3" },
+    { command: "markets", description: "View active predict markets" },
+    { command: "up", description: "Go long on an asset strike" },
+    { command: "down", description: "Go short on an asset strike" },
+    { command: "range", description: "Trade range options" },
+    { command: "status", description: "Check your open option positions" },
+    { command: "balance", description: "Check off-chain and on-chain balance" },
+    { command: "leaderboard", description: "Show top performers leaderboard" },
+    { command: "help", description: "Show help and commands list" },
+  ]).catch(err => {
+    logger.error({ err }, "Failed to set bot commands");
+  });
+
+  return bot;
   
 };

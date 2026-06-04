@@ -11,8 +11,12 @@ import {
   tournamentCommand,
   shareCommand,
 } from "./social.service";
+import { leaderboardMenu, copyboardMenu } from "./social-menu.service";
 
 const composer = new Composer<Context>();
+
+composer.use(leaderboardMenu);
+composer.use(copyboardMenu);
 
 // Social commands
 composer.command(

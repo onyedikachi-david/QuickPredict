@@ -2,17 +2,21 @@ import { Bot } from "grammy";
 import { Context } from "../common/context";
 import { getOpenPositions, settlePosition } from "../db/positions";
 import { updateUserBalance, updateUserStats } from "../db/users";
-import { getCurrentPrice } from "../predict/registry";
+import { getCurrentPriceForOracle } from "../predict/registry";
 import { formatDusdc, formatPrice } from "../predict/pricing";
 import { InlineKeyboard } from "grammy";
 import { logger } from "../helpers/logger";
 import { updateTournamentScore, getActiveTournament } from "../db/tournaments";
 import { getDatabase } from "../db/schema";
+import { getSuiConfig } from "../sui/config";
 
 export function startSettlementKeeper(bot: Bot<Context>) {
   logger.info("Starting settlement keeper...");
 
-  // Check for expired positions every 30 seconds
+  // 1. Hook up the persistent real-time Sui WebSocket subscription
+  connectSuiWebSocket(bot);
+
+  // 2. Keep the 30s polling cycle purely as a resilient backup
   setInterval(async () => {
     try {
       await checkAndSettlePositions(bot);
@@ -22,7 +26,66 @@ export function startSettlementKeeper(bot: Bot<Context>) {
   }, 30 * 1000);
 }
 
-async function checkAndSettlePositions(bot: Bot<Context>) {
+function connectSuiWebSocket(bot: Bot<Context>) {
+  try {
+    const config = getSuiConfig();
+    const rpcUrl = process.env.SUI_RPC_URL || "https://fullnode.testnet.sui.io";
+    const wsUrl = process.env.SUI_WS_URL || rpcUrl.replace(/^http/, "ws");
+
+    logger.info({ wsUrl }, "Attempting to connect to Sui WebSocket...");
+    const ws = new WebSocket(wsUrl);
+
+    let pingInterval: Timer;
+
+    ws.onopen = () => {
+      logger.info("Sui WebSocket connected successfully.");
+      
+      // Subscribe to all events for our Predict Package
+      const subscribeMessage = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "suix_subscribeEvent",
+        params: [
+          { Package: config.packageId }
+        ]
+      };
+      ws.send(JSON.stringify(subscribeMessage));
+
+      // Keep connection alive with pings
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ jsonrpc: "2.0", method: "ping", params: [] }));
+        }
+      }, 20 * 1000);
+    };
+
+    ws.onmessage = async (msg) => {
+      try {
+        const data = JSON.parse(msg.data.toString());
+        if (data.method === "suix_subscribeEvent") {
+          logger.info("Real-time Sui event received via WebSocket, checking settlements...");
+          await checkAndSettlePositions(bot);
+        }
+      } catch (err) {
+        logger.error({ err }, "Error parsing WebSocket message");
+      }
+    };
+
+    ws.onerror = (error: any) => {
+      logger.warn({ error: error?.message || error }, "Sui WebSocket error occurred.");
+    };
+
+    ws.onclose = () => {
+      logger.warn("Sui WebSocket connection closed. Will retry in 30 seconds.");
+      if (pingInterval) clearInterval(pingInterval);
+      setTimeout(() => connectSuiWebSocket(bot), 30 * 1000);
+    };
+  } catch (error) {
+    logger.error({ error }, "Failed to initialize Sui WebSocket client. Polling backup is active.");
+  }
+}
+
+export async function checkAndSettlePositions(bot: { api: any }) {
   const now = Date.now();
   const allOpenPositions = getOpenPositions();
 
@@ -38,7 +101,7 @@ async function checkAndSettlePositions(bot: Bot<Context>) {
   for (const position of expiredPositions) {
     try {
       // Get settlement price (current price at expiry)
-      const settlementPrice = getCurrentPrice(position.asset_symbol);
+      const settlementPrice = await getCurrentPriceForOracle(position.oracle_id);
       if (!settlementPrice) {
         logger.warn(`No price available for ${position.asset_symbol}`);
         continue;
@@ -103,7 +166,7 @@ async function checkAndSettlePositions(bot: Bot<Context>) {
 }
 
 async function sendSettlementNotification(
-  bot: Bot<Context>,
+  bot: { api: any },
   position: any,
   settlementPrice: number,
   won: boolean,

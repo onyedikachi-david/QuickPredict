@@ -7,11 +7,28 @@ import {
 import type { AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
 import type { HydrateFlavor } from "@grammyjs/hydrate";
 import type { I18nFlavor } from "@grammyjs/i18n";
+import type { ConversationFlavor, Conversation } from "@grammyjs/conversations";
 import type { Logger } from "../helpers/logger";
 import type { Config } from "./config";
 
+export type MyConversation = Conversation<Context, Context>;
+
 export interface SessionData {
-  // field?: string;
+  pendingTradeKey?: string;
+  pendingCopyPositionId?: string;
+  tradeBuilder?: {
+    isUp?: boolean;
+    isRange?: boolean;
+    asset?: string;
+    minutes?: number;
+    strike?: number;
+    lowerStrike?: number;
+    upperStrike?: number;
+    amount?: number;
+    oracleId?: string;
+  };
+  marketsActiveAsset?: string;
+  leaderboardPeriod?: "weekly" | "alltime";
 }
 
 interface ExtendedContextFlavor {
@@ -25,7 +42,8 @@ export type Context = HydrateFlavor<
     SessionFlavor<SessionData> &
     I18nFlavor &
     AutoChatActionFlavor
->;
+> &
+  ConversationFlavor<DefaultContext>;
 
 interface Dependencies {
   logger: Logger;

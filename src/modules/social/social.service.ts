@@ -1,6 +1,12 @@
 import { Context } from "../../common/context";
 import { InlineKeyboard } from "grammy";
 import {
+  leaderboardMenu,
+  copyboardMenu,
+  generateLeaderboardMessage,
+  generateCopyboardMessage,
+} from "./social-menu.service";
+import {
   getOrCreateUser,
   getLeaderboard,
   getGroupLeaderboard,
@@ -24,30 +30,8 @@ import { getDatabase, Position } from "../../db/schema";
 const COPY_MAX_LEADERS = 3;
 
 export async function leaderboardCommand(ctx: Context) {
-  const args = ctx.message?.text?.split(" ").slice(1) || [];
-  const period = args[0] === "weekly" ? "weekly" : "alltime";
-
-  const leaders = getLeaderboard(period, 10);
-
-  if (leaders.length === 0) {
-    return ctx.reply("📊 No leaderboard data yet. Be the first to trade!");
-  }
-
-  let message = `🏆 <b>${period === "weekly" ? "Weekly" : "All-Time"} Leaderboard</b>\n\n`;
-
-  leaders.forEach((user, index) => {
-    const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}.`;
-    const username = user.username ? `@${user.username}` : "Anonymous";
-    const pnl = user.total_pnl >= 0 ? "+" : "";
-    const streak = user.streak > 2 ? ` 🔥${user.streak}` : "";
-
-    message += `${medal} ${username}\n`;
-    message += `   ${pnl}${formatDusdc(user.total_pnl)} dUSDC · ${user.win_count}W/${user.loss_count}L${streak}\n\n`;
-  });
-
-  message += `\nUse /groupleaderboard for your group rankings`;
-
-  return ctx.reply(message);
+  const text = await generateLeaderboardMessage(ctx);
+  return ctx.reply(text, { reply_markup: leaderboardMenu });
 }
 
 export async function groupLeaderboardCommand(ctx: Context) {
@@ -70,16 +54,17 @@ export async function groupLeaderboardCommand(ctx: Context) {
     );
   }
 
-  let message = `🏆 <b>Group Leaderboard</b>\n\n`;
+  let message = `🏆 <b>Arena Group Leaderboard</b>\n`;
+  message += `⚡ <i>Active combatants in this channel</i>\n\n`;
 
   leaders.forEach((user, index) => {
     const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}.`;
     const username = user.username ? `@${user.username}` : "Anonymous";
-    const pnl = user.total_pnl >= 0 ? "+" : "";
-    const streak = user.streak > 2 ? ` 🔥${user.streak}` : "";
+    const pnlSymbol = user.total_pnl >= 0 ? "🟩 +" : "🟥 ";
+    const streak = user.streak > 2 ? ` 🔥 <b>Streak: ${user.streak}</b>` : "";
 
-    message += `${medal} ${username}\n`;
-    message += `   ${pnl}${formatDusdc(user.total_pnl)} dUSDC · ${user.win_count}W/${user.loss_count}L${streak}\n\n`;
+    message += `${medal} <b>${username}</b>\n`;
+    message += `   ${pnlSymbol}${formatDusdc(user.total_pnl)} dUSDC · <code>${user.win_count}W - ${user.loss_count}L</code>${streak}\n\n`;
   });
 
   return ctx.reply(message);
@@ -92,11 +77,10 @@ export async function copyCommand(ctx: Context) {
 
   if (args.length === 0) {
     return ctx.reply(
-      `👥 <b>Copy Trading</b>\n\n` +
-        `Usage: /copy @username\n\n` +
-        `Mirror trades from top performers automatically.\n` +
-        `You'll receive a notification for each trade with option to confirm.\n\n` +
-        `See /copyboard for top traders to copy.`
+      `👥 <b>Mirror Trading Protocol</b>\n\n` +
+        `Automatically replicate positions from elite traders with instant in-chat confirmation prompts.\n\n` +
+        `🔹 <b>Activation:</b> <code>/copy @username</code>\n` +
+        `🔹 <b>Discovery:</b> View most copied accounts via /copyboard`
     );
   }
 
@@ -149,12 +133,12 @@ export async function uncopyCommand(ctx: Context) {
     const follows = getActiveFollows(followerId);
 
     if (follows.length === 0) {
-      return ctx.reply("❌ You are not copying anyone.");
+      return ctx.reply("❌ <b>Mirror Protocol:</b> You are not currently copying any traders.");
     }
 
     removeCopyFollow(followerId);
 
-    return ctx.reply(`✅ Stopped copying all traders (${follows.length} total).`);
+    return ctx.reply(`✅ <b>Mirror Protocol Deactivated:</b> Successfully stopped copying all traders (${follows.length} total).`);
   }
 
   const targetUsername = args[0].replace("@", "");
@@ -175,28 +159,8 @@ export async function uncopyCommand(ctx: Context) {
 }
 
 export async function copyboardCommand(ctx: Context) {
-  const leaders = getCopyLeaderboard(5);
-
-  if (leaders.length === 0) {
-    return ctx.reply(
-      "📊 No copy trading data yet.\n\nBe the first to build a following!"
-    );
-  }
-
-  let message = `👥 <b>Most Copied Traders</b>\n\n`;
-
-  leaders.forEach((leader, index) => {
-    const username = leader.username ? `@${leader.username}` : "Anonymous";
-    const pnl = leader.total_pnl >= 0 ? "+" : "";
-    const winRate = leader.win_rate.toFixed(1);
-
-    message += `${index + 1}. ${username}\n`;
-    message += `   ${leader.follower_count} followers · ${pnl}${formatDusdc(leader.total_pnl)} dUSDC · ${winRate}% win rate\n\n`;
-  });
-
-  message += `\nUse /copy @username to mirror their trades`;
-
-  return ctx.reply(message);
+  const text = await generateCopyboardMessage(ctx);
+  return ctx.reply(text, { reply_markup: copyboardMenu });
 }
 
 export async function tournamentCommand(ctx: Context) {

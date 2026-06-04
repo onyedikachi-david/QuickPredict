@@ -3,6 +3,8 @@ import { Context } from "../../common/context";
 import { chatAction } from "@grammyjs/auto-chat-action";
 import { handleLogMiddleware } from "../../middlewares/logging.middleware";
 import { startCommand } from "./home.service";
+import { marketsCommand, balanceCommand } from "../trading/trading.service";
+import { leaderboardCommand } from "../social/social.service";
 
 const composer = new Composer<Context>();
 const module = composer.chatType("private");
@@ -13,17 +15,17 @@ module.command("help", handleLogMiddleware("help-command"), chatAction("typing")
 // Callback handlers for quick actions
 composer.callbackQuery("cmd_markets", async (ctx) => {
   await ctx.answerCallbackQuery();
-  return ctx.reply("Use /markets to view all active markets");
+  return marketsCommand(ctx);
 });
 
 composer.callbackQuery("cmd_balance", async (ctx) => {
   await ctx.answerCallbackQuery();
-  return ctx.reply("Use /balance to view your balance");
+  return balanceCommand(ctx);
 });
 
 composer.callbackQuery("cmd_leaderboard", async (ctx) => {
   await ctx.answerCallbackQuery();
-  return ctx.reply("Use /leaderboard to view top traders");
+  return leaderboardCommand(ctx);
 });
 
 composer.callbackQuery("cmd_help", async (ctx) => {

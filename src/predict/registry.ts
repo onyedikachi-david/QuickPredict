@@ -1,134 +1,219 @@
-// Mock oracle registry - will be replaced with real predict-server API calls
-export interface Oracle {
-  id: string;
-  asset_symbol: string;
-  current_price: number;
-  expiry_ts: number;
-  status: "active" | "pending_settlement" | "settled";
-  settlement_price?: number;
+import {
+  fetchLatestOraclePrice,
+  fetchLatestOracleSvi,
+  fetchOracleAskBounds,
+  fetchOracleState,
+  fetchPredictOracles,
+} from "./client";
+import { logger } from "../helpers/logger";
+import type {
+  Oracle,
+  OracleRegistrySnapshot,
+  ServerOracle,
+  ServerOracleState,
+} from "./types";
+
+const CACHE_TTL_MS = 2 * 60 * 1000;
+const PRICE_SCALE = 1_000_000_000;
+
+let cachedSnapshot: OracleRegistrySnapshot | null = null;
+let refreshPromise: Promise<OracleRegistrySnapshot> | null = null;
+
+function toDisplayPrice(value: number | null | undefined): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  return value / PRICE_SCALE;
 }
 
-// Mock data - simulates multiple active oracles
-const mockOracles: Oracle[] = [
-  {
-    id: "oracle_btc_5min",
-    asset_symbol: "BTC",
-    current_price: 70234,
-    expiry_ts: Date.now() + 5 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "oracle_btc_10min",
-    asset_symbol: "BTC",
-    current_price: 70234,
-    expiry_ts: Date.now() + 10 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "oracle_btc_30min",
-    asset_symbol: "BTC",
-    current_price: 70234,
-    expiry_ts: Date.now() + 30 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "oracle_btc_60min",
-    asset_symbol: "BTC",
-    current_price: 70234,
-    expiry_ts: Date.now() + 60 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "oracle_eth_5min",
-    asset_symbol: "ETH",
-    current_price: 3456,
-    expiry_ts: Date.now() + 5 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "oracle_eth_10min",
-    asset_symbol: "ETH",
-    current_price: 3456,
-    expiry_ts: Date.now() + 10 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "oracle_sol_10min",
-    asset_symbol: "SOL",
-    current_price: 145.67,
-    expiry_ts: Date.now() + 10 * 60 * 1000,
-    status: "active",
-  },
-];
+function normalizeOracle(
+  serverOracle: ServerOracle,
+  state: ServerOracleState | null,
+  stale: boolean
+): Oracle {
+  const latestPrice = state?.latest_price || null;
+  const settlementPrice = toDisplayPrice(serverOracle.settlement_price);
+  const currentPrice =
+    settlementPrice ??
+    toDisplayPrice(latestPrice?.spot) ??
+    toDisplayPrice(latestPrice?.forward) ??
+    toDisplayPrice(serverOracle.min_strike) ??
+    0;
 
-let oracleRegistry: Oracle[] = [...mockOracles];
-
-export function refreshOracleRegistry(): void {
-  // In production, this would call:
-  // GET https://predict-server.testnet.mystenlabs.com/predicts/:predict_id/oracles
-  
-  // For now, update mock data with fresh expiry times
-  oracleRegistry = mockOracles.map((oracle) => ({
-    ...oracle,
-    expiry_ts: Date.now() + getMinutesFromOracleId(oracle.id) * 60 * 1000,
-    current_price: oracle.current_price + (Math.random() - 0.5) * 100, // Simulate price movement
-  }));
+  return {
+    id: serverOracle.oracle_id,
+    predict_id: serverOracle.predict_id,
+    asset_symbol: serverOracle.underlying_asset.toUpperCase(),
+    current_price: currentPrice,
+    forward_price: toDisplayPrice(latestPrice?.forward) ?? null,
+    expiry_ts: serverOracle.expiry,
+    min_strike: toDisplayPrice(serverOracle.min_strike) ?? 0,
+    tick_size: toDisplayPrice(serverOracle.tick_size) ?? 0,
+    status: serverOracle.status,
+    settlement_price: settlementPrice,
+    latest_price: latestPrice,
+    latest_svi: state?.latest_svi || null,
+    ask_bounds: state?.ask_bounds || null,
+    stale,
+    fetched_at: Date.now(),
+  };
 }
 
-function getMinutesFromOracleId(oracleId: string): number {
-  const match = oracleId.match(/(\d+)min/);
-  return match ? parseInt(match[1]) : 10;
+async function loadOracleStateWithPricing(oracleId: string): Promise<ServerOracleState> {
+  const state = await fetchOracleState(oracleId);
+  const [latestPrice, latestSvi, askBounds] = await Promise.allSettled([
+    fetchLatestOraclePrice(oracleId),
+    fetchLatestOracleSvi(oracleId),
+    fetchOracleAskBounds(oracleId),
+  ]);
+
+  if (latestPrice.status === "rejected") {
+    logger.error({ error: latestPrice.reason, oracleId }, "Failed to fetch latest oracle price");
+  }
+  if (latestSvi.status === "rejected") {
+    logger.error({ error: latestSvi.reason, oracleId }, "Failed to fetch latest oracle SVI");
+  }
+  if (askBounds.status === "rejected") {
+    logger.error({ error: askBounds.reason, oracleId }, "Failed to fetch oracle ask bounds");
+  }
+
+  return {
+    ...state,
+    latest_price: latestPrice.status === "fulfilled" ? latestPrice.value : state.latest_price,
+    latest_svi: latestSvi.status === "fulfilled" ? latestSvi.value : state.latest_svi,
+    ask_bounds: askBounds.status === "fulfilled" ? askBounds.value : state.ask_bounds,
+  };
 }
 
-export function getActiveOracles(): Oracle[] {
-  return oracleRegistry.filter((o) => o.status === "active");
-}
-
-export function getOraclesByAsset(assetSymbol: string): Oracle[] {
-  return oracleRegistry.filter(
-    (o) => o.asset_symbol === assetSymbol && o.status === "active"
+async function loadFreshRegistry(): Promise<OracleRegistrySnapshot> {
+  const serverOracles = await fetchPredictOracles();
+  const activeOracles = serverOracles.filter((oracle) => oracle.status === "active");
+  const normalized = await Promise.all(
+    activeOracles.map(async (oracle) => {
+      try {
+        return normalizeOracle(oracle, await loadOracleStateWithPricing(oracle.oracle_id), false);
+      } catch (error) {
+        logger.error({ error, oracleId: oracle.oracle_id }, "Failed to fetch oracle state");
+        return normalizeOracle(oracle, null, true);
+      }
+    })
   );
+
+  const snapshot = {
+    oracles: normalized.sort((a, b) => a.expiry_ts - b.expiry_ts),
+    stale: normalized.some((oracle) => oracle.stale),
+    fetchedAt: Date.now(),
+  };
+
+  cachedSnapshot = snapshot;
+  return snapshot;
 }
 
-export function getAvailableAssets(): string[] {
-  const assets = new Set(
-    oracleRegistry
-      .filter((o) => o.status === "active")
-      .map((o) => o.asset_symbol)
-  );
-  return Array.from(assets);
+async function refreshInBackground(): Promise<void> {
+  if (refreshPromise) return;
+
+  refreshPromise = loadFreshRegistry()
+    .catch((error) => {
+      logger.error({ error }, "Failed to refresh Predict oracle registry");
+      if (cachedSnapshot) {
+        cachedSnapshot = {
+          ...cachedSnapshot,
+          stale: true,
+          oracles: cachedSnapshot.oracles.map((oracle) => ({ ...oracle, stale: true })),
+        };
+      }
+      throw error;
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+
+  await refreshPromise.catch(() => undefined);
 }
 
-export function findNearestOracle(
+export async function refreshOracleRegistry(): Promise<OracleRegistrySnapshot> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = loadFreshRegistry().finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
+export async function getOracleRegistrySnapshot(): Promise<OracleRegistrySnapshot> {
+  const now = Date.now();
+
+  if (!cachedSnapshot) {
+    try {
+      return await refreshOracleRegistry();
+    } catch (error) {
+      logger.error({ error }, "Initial Predict oracle registry load failed");
+      return { oracles: [], stale: true, fetchedAt: now };
+    }
+  }
+
+  if (now - cachedSnapshot.fetchedAt > CACHE_TTL_MS) {
+    void refreshInBackground();
+    return {
+      ...cachedSnapshot,
+      stale: true,
+      oracles: cachedSnapshot.oracles.map((oracle) => ({ ...oracle, stale: true })),
+    };
+  }
+
+  return cachedSnapshot;
+}
+
+export async function getActiveOracles(): Promise<Oracle[]> {
+  const snapshot = await getOracleRegistrySnapshot();
+  return snapshot.oracles.filter((oracle) => oracle.status === "active");
+}
+
+export async function getOraclesByAsset(assetSymbol: string): Promise<Oracle[]> {
+  const symbol = assetSymbol.toUpperCase();
+  const oracles = await getActiveOracles();
+  return oracles.filter((oracle) => oracle.asset_symbol === symbol);
+}
+
+export async function getAvailableAssets(): Promise<string[]> {
+  const oracles = await getActiveOracles();
+  return Array.from(new Set(oracles.map((oracle) => oracle.asset_symbol))).sort();
+}
+
+export async function findNearestOracle(
   assetSymbol: string,
   targetMinutes: number
-): Oracle | null {
-  const oracles = getOraclesByAsset(assetSymbol);
+): Promise<Oracle | null> {
+  const oracles = await getOraclesByAsset(assetSymbol);
   if (oracles.length === 0) return null;
 
-  // Find oracle with expiry closest to target
   return oracles.reduce((nearest, current) => {
     const currentMinutes = (current.expiry_ts - Date.now()) / (60 * 1000);
     const nearestMinutes = (nearest.expiry_ts - Date.now()) / (60 * 1000);
 
-    return Math.abs(currentMinutes - targetMinutes) <
-      Math.abs(nearestMinutes - targetMinutes)
+    return Math.abs(currentMinutes - targetMinutes) < Math.abs(nearestMinutes - targetMinutes)
       ? current
       : nearest;
   });
 }
 
-export function getOracleById(oracleId: string): Oracle | null {
-  return oracleRegistry.find((o) => o.id === oracleId) || null;
+export async function getOracleById(oracleId: string): Promise<Oracle | null> {
+  const snapshot = await getOracleRegistrySnapshot();
+  const cachedOracle = snapshot.oracles.find((oracle) => oracle.id === oracleId);
+  if (cachedOracle) return cachedOracle;
+
+  try {
+    const state = await loadOracleStateWithPricing(oracleId);
+    return normalizeOracle(state.oracle, state, false);
+  } catch (error) {
+    logger.error({ error, oracleId }, "Failed to fetch oracle by id");
+    return null;
+  }
 }
 
-export function getCurrentPrice(assetSymbol: string): number | null {
-  const oracle = oracleRegistry.find((o) => o.asset_symbol === assetSymbol);
-  return oracle?.current_price || null;
+export async function getCurrentPrice(assetSymbol: string): Promise<number | null> {
+  const oracles = await getOraclesByAsset(assetSymbol);
+  return oracles[0]?.current_price || null;
 }
 
-// Initialize registry
-refreshOracleRegistry();
-
-// Refresh every 2 minutes as per PRD
-setInterval(refreshOracleRegistry, 2 * 60 * 1000);
+export async function getCurrentPriceForOracle(oracleId: string): Promise<number | null> {
+  const oracle = await getOracleById(oracleId);
+  return oracle?.settlement_price ?? oracle?.current_price ?? null;
+}

@@ -74,6 +74,81 @@ export async function mintPosition(params: MintPositionParams): Promise<Transact
 }
 
 /**
+ * Mint a range position
+ * Calls predict::mint_range(manager, predict, oracle, lower_strike, upper_strike, coin)
+ */
+export async function mintRangePosition(params: {
+  telegramId: string;
+  password: string;
+  managerObjectId: string;
+  predictObjectId: string;
+  oracleId: string;
+  lowerStrike: number;
+  upperStrike: number;
+  coinAmount: string; // dUSDC quantity in base units
+}): Promise<TransactionResult> {
+  const config = getSuiConfig();
+  const walletAddress = getUserWalletAddress(params.telegramId);
+
+  if (!walletAddress) {
+    return {
+      digest: "",
+      success: false,
+      error: "No wallet found. Create one first with /wallet create <password>",
+    };
+  }
+
+  logger.info({ params }, "Minting range position...");
+
+  const tx = new Transaction();
+
+  // Select coins to cover the amount
+  const coinIds = await selectCoins(walletAddress, config.dusdcType, BigInt(params.coinAmount));
+  
+  // Merge coins if multiple
+  let coinArg;
+  if (coinIds.length === 1) {
+    coinArg = tx.object(coinIds[0]);
+  } else {
+    const [primaryCoin, ...coinsToMerge] = coinIds;
+    coinArg = tx.object(primaryCoin);
+    if (coinsToMerge.length > 0) {
+      tx.mergeCoins(
+        coinArg,
+        coinsToMerge.map((id) => tx.object(id))
+      );
+    }
+  }
+
+  // Split the exact amount needed
+  const [paymentCoin] = tx.splitCoins(coinArg, [params.coinAmount]);
+
+  // Call predict::mint_range
+  tx.moveCall({
+    target: `${config.packageId}::predict::mint_range`,
+    arguments: [
+      tx.object(params.managerObjectId),
+      tx.object(params.predictObjectId),
+      tx.object(params.oracleId),
+      tx.pure.u64(params.lowerStrike),
+      tx.pure.u64(params.upperStrike),
+      paymentCoin,
+    ],
+    typeArguments: [config.dusdcType],
+  });
+
+  const result = await executeUserTransaction(params.telegramId, params.password, tx);
+
+  if (!result.success) {
+    logger.error({ params, error: result.error }, "Failed to mint range position");
+  } else {
+    logger.info({ digest: result.digest }, "Range position minted successfully");
+  }
+
+  return result;
+}
+
+/**
  * Redeem settled positions
  * Calls predict::redeem_permissionless(manager, predict, settled_oracle)
  */

@@ -26,11 +26,18 @@ export function getOrCreateUser(telegramId: string, username?: string): User {
       .prepare("SELECT * FROM users WHERE telegram_id = ?")
       .get(telegramId) as User;
   } else {
-    // Update last active
-    db.prepare("UPDATE users SET last_active = ? WHERE telegram_id = ?").run(
-      now,
-      telegramId
-    );
+    // Update last active and sync username if changed
+    if (username && user.username !== username) {
+      db.prepare(
+        "UPDATE users SET last_active = ?, username = ? WHERE telegram_id = ?"
+      ).run(now, username, telegramId);
+      user.username = username;
+    } else {
+      db.prepare("UPDATE users SET last_active = ? WHERE telegram_id = ?").run(
+        now,
+        telegramId
+      );
+    }
   }
 
   return user;
@@ -175,3 +182,25 @@ export function trackUserInGroup(telegramId: string, groupId: string): void {
      DO UPDATE SET last_seen = ?`
   ).run(telegramId, groupId, now, now);
 }
+
+export async function syncUserBalanceWithOnchain(telegramId: string): Promise<number> {
+  const { getUserWalletAddress } = await import("../sui/wallets");
+  const { getDusdcBalance } = await import("../sui/coins");
+  
+  const address = getUserWalletAddress(telegramId);
+  if (!address) return getUserBalance(telegramId);
+
+  try {
+    const onchainDusdc = await getDusdcBalance(address);
+    const db = getDatabase();
+    
+    // Update the user's off-chain balance to match on-chain exactly
+    db.prepare("UPDATE users SET dusdc_balance = ? WHERE telegram_id = ?").run(Number(onchainDusdc), telegramId);
+    
+    return Number(onchainDusdc);
+  } catch (error) {
+    // If fetching fails, fallback to off-chain balance
+    return getUserBalance(telegramId);
+  }
+}
+

@@ -14,9 +14,18 @@ import {
   confirmCopyCallback,
   skipCopyCallback,
 } from "./trading.service";
-import { walletCommand } from "./wallet.service";
+import { walletCommand, walletMenu, withdrawCommand } from "./wallet.service";
+import { swapCommand } from "./swap.service";
+import { tradeBuilderAssetMenu } from "./trade-builder.service";
+import { marketsMenu, statusMenu } from "./trading-menu.service";
 
 const composer = new Composer<Context>();
+
+// Register wallet and trade builder menu middlewares before commands
+composer.use(walletMenu);
+composer.use(tradeBuilderAssetMenu);
+composer.use(marketsMenu);
+composer.use(statusMenu);
 
 // Trading commands
 composer.command(
@@ -66,6 +75,20 @@ composer.command(
   handleLogMiddleware("wallet-command"),
   chatAction("typing"),
   walletCommand
+);
+
+composer.command(
+  "withdraw",
+  handleLogMiddleware("withdraw-command"),
+  chatAction("typing"),
+  withdrawCommand
+);
+
+composer.command(
+  "swap",
+  handleLogMiddleware("swap-command"),
+  chatAction("typing"),
+  swapCommand
 );
 
 // Callback handlers
