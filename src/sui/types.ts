@@ -18,29 +18,81 @@ export interface OracleSVI {
   settlement_price?: number;
 }
 
+/**
+ * Mint a binary (UP/DOWN) position.
+ *
+ * Mirrors the on-chain flow `predict_manager::deposit` -> `market_key::new` ->
+ * `predict::mint`. Collateral is pulled from the PredictManager's balance, so
+ * `depositBase` is topped up from the wallet first. `quantityBase` is the face
+ * value (notional) in dUSDC base units; the contract charges the premium itself.
+ */
 export interface MintPositionParams {
   telegramId: string;
   password: string;
-  managerObjectId: string;
   predictObjectId: string;
+  managerObjectId: string;
   oracleId: string;
-  strike: number;
+  expiryMs: number;
+  strikeDollars: number;
   isUp: boolean;
-  coinAmount: number;
+  quantityBase: number;
+  depositBase: bigint;
 }
 
+export interface MintRangePositionParams {
+  telegramId: string;
+  password: string;
+  predictObjectId: string;
+  managerObjectId: string;
+  oracleId: string;
+  expiryMs: number;
+  lowerStrikeDollars: number;
+  upperStrikeDollars: number;
+  quantityBase: number;
+  depositBase: bigint;
+}
+
+/**
+ * Redeem a binary position back into the PredictManager balance. When `settled`
+ * is true the protocol's permissionless redeem path is used.
+ */
 export interface RedeemPositionParams {
   telegramId: string;
   password: string;
-  managerObjectId: string;
   predictObjectId: string;
-  settledOracleId: string;
+  managerObjectId: string;
+  oracleId: string;
+  expiryMs: number;
+  strikeDollars: number;
+  isUp: boolean;
+  quantityBase: number;
+  settled: boolean;
+}
+
+export interface RedeemRangePositionParams {
+  telegramId: string;
+  password: string;
+  predictObjectId: string;
+  managerObjectId: string;
+  oracleId: string;
+  expiryMs: number;
+  lowerStrikeDollars: number;
+  upperStrikeDollars: number;
+  quantityBase: number;
+}
+
+export interface CreateManagerResult {
+  digest: string;
+  success: boolean;
+  managerId?: string;
+  error?: string;
 }
 
 export interface TransactionResult {
   digest: string;
   success: boolean;
   effects?: any;
+  objectChanges?: any;
   error?: string;
 }
 

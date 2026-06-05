@@ -9,6 +9,8 @@ import {
 } from "../../predict/registry";
 import { formatPrice, formatDusdc, formatPercentage } from "../../predict/pricing";
 import { getOrCreateUser, syncUserBalanceWithOnchain } from "../../db/users";
+import { getUserManagerId } from "../../db/wallets";
+import { fetchManagerSummary } from "../../predict/client";
 import { getOpenPositions } from "../../db/positions";
 import { checkAndSettlePositions } from "../../keeper/settler";
 import { formatStaleMarker } from "./trading.service";
@@ -201,16 +203,25 @@ marketsMenu.register(marketsDetailMenu);
 export async function generateStatusMessage(ctx: Context) {
   if (!ctx.from) return "❌ Error: Unable to identify user.";
 
-  await syncUserBalanceWithOnchain(ctx.from.id.toString());
-  const user = getOrCreateUser(ctx.from.id.toString(), ctx.from.username);
+  const telegramId = ctx.from.id.toString();
+  await syncUserBalanceWithOnchain(telegramId);
+  const user = getOrCreateUser(telegramId, ctx.from.username);
   const positions = getOpenPositions(user.telegram_id);
+
+  // Unified balance: spendable wallet + on-chain Trading Account (manager).
+  const managerId = getUserManagerId(telegramId);
+  const summary = managerId ? await fetchManagerSummary(managerId) : null;
+  let balanceFooter = `• <b>Wallet:</b> <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>`;
+  if (summary) {
+    balanceFooter += `\n• <b>Trading Account:</b> <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}`;
+  }
 
   if (positions.length === 0) {
     return (
       `💼 <b>Portfolio Status · Active Positions</b>\n` +
       `⚡ <i>Your open decentralized options positions</i>\n\n` +
       `• <b>Open Options:</b> <code>0</code> active trades\n` +
-      `• <b>Collateral Balance:</b> <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>\n\n` +
+      `${balanceFooter}\n\n` +
       `💡 <i>Browse current opportunities using /markets.</i>`
     );
   }
@@ -242,7 +253,7 @@ export async function generateStatusMessage(ctx: Context) {
       `   <b>Expiry:</b> <code>${timeLeft}m</code> remaining · <b>Premium:</b> <code>${formatDusdc(pos.premium_dusdc)} dUSDC</code>\n\n`;
   }
 
-  message += `💰 <b>Collateral Balance:</b> <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>`;
+  message += balanceFooter;
   return message;
 }
 

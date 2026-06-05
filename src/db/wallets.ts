@@ -58,3 +58,20 @@ export function createUserWallet(input: CreateUserWalletInput): UserWallet {
 export function userWalletExists(telegramId: string): boolean {
   return getUserWallet(telegramId) !== null;
 }
+
+/**
+ * Get the user's PredictManager object id, if one has been created.
+ */
+export function getUserManagerId(telegramId: string): string | null {
+  return getUserWallet(telegramId)?.predict_manager_id || null;
+}
+
+/**
+ * Persist the PredictManager object id for a user after on-chain creation.
+ */
+export function setUserManagerId(telegramId: string, managerId: string): void {
+  const db = getDatabase();
+  db.prepare(
+    "UPDATE user_wallets SET predict_manager_id = ?, updated_at = ? WHERE telegram_id = ?"
+  ).run(managerId, Date.now(), telegramId);
+}

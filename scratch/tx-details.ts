@@ -1,7 +1,7 @@
-import { getSuiClient } from "../src/sui/client";
+import { getRpcClient } from "../src/sui/client";
 
 async function main() {
-  const client = getSuiClient();
+  const client = getRpcClient();
   const digest = "96UNBKk14NpcnmKdtShYTxsYKn2wrj8CfdXUCL7EahZL";
   console.log("Querying transaction details for:", digest);
   

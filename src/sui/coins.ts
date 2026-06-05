@@ -3,16 +3,12 @@ import { getSuiClient } from "./client";
 import { getSuiConfig } from "./config";
 import { logger } from "../helpers/logger";
 
-const TESTNET_DUSDC_TYPE_FALLBACK =
-  "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a::dusdc::DUSDC";
-
 export function getDusdcType(): string {
-  return process.env.DUSDC_TYPE || TESTNET_DUSDC_TYPE_FALLBACK;
+  return getSuiConfig().dusdcType;
 }
 
 export function getDusdcDecimals(): number {
-  const decimals = Number.parseInt(process.env.DUSDC_DECIMALS || "6", 10);
-  return Number.isInteger(decimals) && decimals >= 0 ? decimals : 6;
+  return getSuiConfig().dusdcDecimals;
 }
 
 /**
@@ -32,12 +28,10 @@ export async function getCoinBalance(
   const client = getSuiClient();
 
   try {
-    const balance = await client.getBalance({
-      owner: address,
-      coinType,
-    });
-
-    return BigInt(balance.totalBalance);
+    // gRPC StateService.GetBalance → { balance: { balance, coinBalance, addressBalance } }.
+    // `balance` is the total across coin objects + the address-balance accumulator.
+    const result = await client.getBalance({ owner: address, coinType });
+    return BigInt(result.balance.balance);
   } catch (error) {
     logger.error({ error, address, coinType }, "Failed to get coin balance");
     throw error;
@@ -54,15 +48,17 @@ export async function getCoinObjects(
   const client = getSuiClient();
 
   try {
-    const coins = await client.getCoins({
-      owner: address,
-      coinType,
-    });
-
-    return coins.data.map((coin) => ({
-      objectId: coin.coinObjectId,
-      balance: BigInt(coin.balance),
-    }));
+    // gRPC StateService.ListOwnedObjects (coin-filtered), paginated.
+    const out: Array<{ objectId: string; balance: bigint }> = [];
+    let cursor: string | undefined = undefined;
+    do {
+      const page = await client.listCoins({ owner: address, coinType, cursor, limit: 50 });
+      for (const coin of page.objects) {
+        out.push({ objectId: coin.objectId, balance: BigInt(coin.balance) });
+      }
+      cursor = page.hasNextPage ? (page.cursor ?? undefined) : undefined;
+    } while (cursor);
+    return out;
   } catch (error) {
     logger.error({ error, address, coinType }, "Failed to get coin objects");
     throw error;
@@ -155,65 +151,5 @@ export function parseCoinAmount(amount: string, decimals: number): bigint {
   return BigInt(combined);
 }
 
-export async function triggerFaucetForUser(
-  targetAddress: string,
-): Promise<{ success: boolean; digest?: string; error?: string }> {
-  const sponsorPrivateKeyHex =
-    process.env.SPONSOR_PRIVATE_KEY || process.env.PRIVATE_KEY;
-  if (!sponsorPrivateKeyHex) {
-    logger.warn(
-      "No SPONSOR_PRIVATE_KEY or PRIVATE_KEY defined in env. Faucet skipped.",
-    );
-    return {
-      success: false,
-      error: "Faucet not configured on server (.env is missing private key)",
-    };
-  }
-
-  try {
-    const { parsePrivateKey } = await import("./wallets");
-    const { executeTransaction } = await import("./transactions");
-
-    const sponsorKeypair = parsePrivateKey(sponsorPrivateKeyHex);
-    const sponsorAddress = sponsorKeypair.getPublicKey().toSuiAddress();
-    const config = getSuiConfig();
-
-    const tx = new Transaction();
-    tx.setSender(sponsorAddress);
-
-    // 1. Split SUI for gas (0.1 SUI = 100,000,000 MIST)
-    const [suiCoin] = tx.splitCoins(tx.gas, [100_000_000n]);
-    tx.transferObjects([suiCoin], targetAddress);
-
-    // 2. Split and transfer 1000 dUSDC (1,000,000,000 base units)
-    const coinIds = await selectCoins(
-      sponsorAddress,
-      config.dusdcType,
-      1_000_000_000n,
-    );
-    let coinArg;
-    if (coinIds.length === 1) {
-      coinArg = tx.object(coinIds[0]);
-    } else {
-      const [primaryCoin, ...coinsToMerge] = coinIds;
-      coinArg = tx.object(primaryCoin);
-      if (coinsToMerge.length > 0) {
-        tx.mergeCoins(
-          coinArg,
-          coinsToMerge.map((id) => tx.object(id)),
-        );
-      }
-    }
-    const [paymentCoin] = tx.splitCoins(coinArg, [1_000_000_000n]);
-    tx.transferObjects([paymentCoin], targetAddress);
-
-    const result = await executeTransaction(tx, sponsorKeypair);
-    return result;
-  } catch (error) {
-    logger.error({ error, targetAddress }, "Faucet execution failed");
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
+// Faucet removed: wallets are funded manually (public Sui faucet for gas,
+// host-minted dUSDC for collateral). There is no in-bot faucet.

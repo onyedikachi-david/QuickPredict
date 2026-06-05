@@ -1,7 +1,5 @@
 import { getDatabase, User } from "./schema";
 
-const STARTING_BALANCE = 1000 * 1_000_000; // 1,000 dUSDC (6 decimals)
-
 export function getOrCreateUser(telegramId: string, username?: string): User {
   const db = getDatabase();
   const now = Date.now();
@@ -11,16 +9,12 @@ export function getOrCreateUser(telegramId: string, username?: string): User {
     .get(telegramId) as User | undefined;
 
   if (!user) {
+    // Non-custodial: a new user starts with a zero cached balance. The real
+    // balance lives on-chain and is read by syncUserBalanceWithOnchain.
     db.prepare(
       `INSERT INTO users (telegram_id, username, dusdc_balance, created_at, last_active)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(telegramId, username || null, STARTING_BALANCE, now, now);
-
-    // Add initial deposit transaction
-    db.prepare(
-      `INSERT INTO transactions (telegram_id, type, amount, description, created_at)
-       VALUES (?, 'deposit', ?, 'Initial balance', ?)`
-    ).run(telegramId, STARTING_BALANCE, now);
+       VALUES (?, ?, 0, ?, ?)`
+    ).run(telegramId, username || null, now, now);
 
     user = db
       .prepare("SELECT * FROM users WHERE telegram_id = ?")
@@ -43,24 +37,9 @@ export function getOrCreateUser(telegramId: string, username?: string): User {
   return user;
 }
 
-export function updateUserBalance(
-  telegramId: string,
-  amount: number,
-  type: "deposit" | "withdraw" | "trade" | "payout",
-  description: string
-): void {
-  const db = getDatabase();
-  const now = Date.now();
-
-  db.prepare(
-    "UPDATE users SET dusdc_balance = dusdc_balance + ? WHERE telegram_id = ?"
-  ).run(amount, telegramId);
-
-  db.prepare(
-    `INSERT INTO transactions (telegram_id, type, amount, description, created_at)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(telegramId, type, amount, description, now);
-}
+// updateUserBalance was removed: the cached `dusdc_balance` is a read-through
+// mirror of the on-chain wallet balance (set only by syncUserBalanceWithOnchain),
+// never mutated by business logic. Funds move on-chain; we re-read, not adjust.
 
 export function getUserBalance(telegramId: string): number {
   const db = getDatabase();

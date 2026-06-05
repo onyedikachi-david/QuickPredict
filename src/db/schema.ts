@@ -86,6 +86,7 @@ export interface UserWallet {
   iv: string;
   auth_tag: string;
   kdf: string;
+  predict_manager_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -199,6 +200,7 @@ export function initializeDatabase(dbPath: string = "./quick-predict.db"): Datab
       iv TEXT NOT NULL,
       auth_tag TEXT NOT NULL,
       kdf TEXT NOT NULL,
+      predict_manager_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)

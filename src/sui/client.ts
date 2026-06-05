@@ -1,45 +1,47 @@
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
-import { getSuiRpcUrl } from "./config";
+import { getNetworkConfig } from "../config/network";
 import { logger } from "../helpers/logger";
 
-export type SuiClient = SuiJsonRpcClient;
+// Primary data transport is gRPC (the post-JSON-RPC path). JSON-RPC is retained
+// only for transaction execution (pending a funded-wallet validation of the
+// gRPC execute path) and for the DeepBook v3 SDK, which predates gRPC.
+export type SuiClient = SuiGrpcClient;
 
-let cachedClient: SuiClient | null = null;
+let grpcClient: SuiGrpcClient | null = null;
+let rpcClient: SuiJsonRpcClient | null = null;
 
 /**
- * Create and return a singleton SuiClient instance
+ * Primary client for reads + simulation, over gRPC.
  */
-export function getSuiClient(): SuiClient {
-  if (cachedClient) {
-    return cachedClient;
-  }
-
-  const rpcUrl = getSuiRpcUrl();
-  
-  // Determine network from RPC URL
-  const network = rpcUrl.includes('testnet') ? 'testnet' 
-    : rpcUrl.includes('devnet') ? 'devnet'
-    : rpcUrl.includes('localnet') ? 'localnet'
-    : 'mainnet';
-  
-  logger.info({ rpcUrl, network }, "Initializing Sui client");
-
-  cachedClient = new SuiJsonRpcClient({
-    network,
-    url: rpcUrl,
-  });
-
-  return cachedClient;
+export function getSuiClient(): SuiGrpcClient {
+  if (grpcClient) return grpcClient;
+  const cfg = getNetworkConfig();
+  logger.info({ network: cfg.network, grpc: cfg.endpoints.grpc }, "Initializing Sui gRPC client");
+  grpcClient = new SuiGrpcClient({ network: cfg.network, baseUrl: cfg.endpoints.grpc });
+  return grpcClient;
 }
 
 /**
- * Check if the Sui client is connected and working
+ * JSON-RPC client — used for transaction execution and the DeepBook v3 SDK.
+ * Deprecated by Sui (sunset 2026-07-31); migrate the execute path to gRPC
+ * `signAndExecuteTransaction` once it is validated against a funded wallet.
+ */
+export function getRpcClient(): SuiJsonRpcClient {
+  if (rpcClient) return rpcClient;
+  const cfg = getNetworkConfig();
+  logger.info({ network: cfg.network, rpc: cfg.endpoints.rpc }, "Initializing Sui JSON-RPC client (execute/DeepBook)");
+  rpcClient = new SuiJsonRpcClient({ network: cfg.network, url: cfg.endpoints.rpc });
+  return rpcClient;
+}
+
+/**
+ * Check that the gRPC data path is reachable.
  */
 export async function checkSuiConnection(): Promise<boolean> {
   try {
-    const client = getSuiClient();
-    const rpcApiVersion = await client.getRpcApiVersion();
-    logger.info({ rpcApiVersion }, "Sui client connected successfully");
+    await getSuiClient().getReferenceGasPrice();
+    logger.info("Sui gRPC client connected successfully");
     return true;
   } catch (error) {
     logger.error({ error }, "Failed to connect to Sui network");
@@ -48,17 +50,9 @@ export async function checkSuiConnection(): Promise<boolean> {
 }
 
 /**
- * Get the current epoch
- */
-export async function getCurrentEpoch(): Promise<string> {
-  const client = getSuiClient();
-  const systemState = await client.getLatestSuiSystemState();
-  return systemState.epoch;
-}
-
-/**
- * Clear cached client (useful for testing)
+ * Clear cached clients (useful for testing / config changes).
  */
 export function clearClientCache(): void {
-  cachedClient = null;
+  grpcClient = null;
+  rpcClient = null;
 }

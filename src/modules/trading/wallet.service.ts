@@ -1,12 +1,11 @@
 import { Context, MyConversation } from "../../common/context";
 import { getOrCreateUser, syncUserBalanceWithOnchain } from "../../db/users";
-import { getUserWallet } from "../../db/wallets";
+import { getUserWallet, getUserManagerId } from "../../db/wallets";
 import {
   getCoinBalance,
   getDusdcBalance,
   getDusdcDecimals,
   formatCoinAmount,
-  triggerFaucetForUser,
   selectCoins,
   getDusdcType,
   parseCoinAmount,
@@ -22,6 +21,17 @@ import { InlineKeyboard } from "grammy";
 import { getDatabase } from "../../db/schema";
 import { Transaction } from "@mysten/sui/transactions";
 import { executeUserTransaction, getExplorerTxLink } from "../../sui/transactions";
+import {
+  withdrawFromManager,
+  claimSettledPositions,
+  type ClaimPositionInput,
+} from "../../sui/predict";
+import { fetchManagerSummary } from "../../predict/client";
+import { getNetworkConfig } from "../../config/network";
+import {
+  getClaimableSettledPositions,
+  markPositionRedeemed,
+} from "../../db/positions";
 
 // Define help submenu
 export const helpMenu = new Menu<Context>("wallet-help")
@@ -39,36 +49,6 @@ export const walletMenu = new Menu<Context>("wallet-main")
     const displayUser = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || "User");
     const text = await getWalletOverviewText(ctx.from.id.toString(), displayUser);
     await ctx.editMessageText(text);
-  })
-  .text("🎁 Claim Faucet", async (ctx) => {
-    if (!ctx.from) return;
-    const telegramId = ctx.from.id.toString();
-    const address = getUserWalletAddress(telegramId);
-    if (!address) {
-      await ctx.answerCallbackQuery({ text: "No wallet found." });
-      return;
-    }
-
-    await ctx.answerCallbackQuery({ text: "Requesting testnet faucet..." });
-    const faucetResult = await triggerFaucetForUser(address);
-
-    if (faucetResult.success) {
-      await ctx.reply(
-        `🎁 <b>Faucet Claimed Successfully!</b>\n\n` +
-        `Credited 0.1 SUI and 1,000 dUSDC.\n` +
-        `Tx: <code>${faucetResult.digest}</code>`,
-        { parse_mode: "HTML" }
-      );
-      const displayUser = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || "User");
-      const text = await getWalletOverviewText(telegramId, displayUser);
-      await ctx.editMessageText(text);
-    } else {
-      await ctx.reply(
-        `⚠️ <b>Faucet Request Failed:</b>\n\n` +
-        `<code>${faucetResult.error || "No sponsor key or rate limited"}</code>`,
-        { parse_mode: "HTML" }
-      );
-    }
   })
   .row()
   .text("🔑 Unlock / Verify", async (ctx) => {
@@ -110,6 +90,19 @@ export const walletMenu = new Menu<Context>("wallet-main")
       await ctx.deleteMessage();
     } catch (e) {}
     await ctx.conversation.enter("swapConversation");
+  })
+  .row()
+  .text("💸 Claim Winnings", async (ctx) => {
+    if (!ctx.from) return;
+    if (!getUserManagerId(ctx.from.id.toString())) {
+      await ctx.answerCallbackQuery({ text: "No trading account yet — place a trade first." });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    try {
+      await ctx.deleteMessage();
+    } catch (e) {}
+    await ctx.conversation.enter("claimConversation");
   })
   .submenu("❓ Security & Help", "wallet-help", async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -467,13 +460,9 @@ export async function withdrawConversation(
     if (result.success && result.digest) {
       const db = getDatabase();
       const now = Date.now();
-      
-      if (token === "dUSDC") {
-        db.prepare(
-          "UPDATE users SET dusdc_balance = dusdc_balance - ? WHERE telegram_id = ?"
-        ).run(parseFloat(amountStr), telegramId);
-      }
 
+      // Log the withdrawal as a bot-action record (the authoritative balance is
+      // re-read from chain by syncUserBalanceWithOnchain below).
       db.prepare(
         `INSERT INTO transactions (telegram_id, type, amount, description, created_at)
          VALUES (?, ?, ?, ?, ?)`
@@ -524,6 +513,166 @@ export async function withdrawCommand(ctx: Context) {
     return ctx.reply("❌ Create a wallet first with /wallet create <password>");
   }
   return ctx.conversation.enter("withdrawConversation");
+}
+
+/**
+ * Claim realized winnings: withdraw the user's on-chain Trading Account
+ * (PredictManager) dUSDC balance back to their wallet. Settled binary winners
+ * are auto-redeemed into the manager by the settlement keeper; this realizes
+ * that balance into the spendable wallet.
+ */
+export async function claimConversation(
+  conversation: MyConversation,
+  ctx: Context
+) {
+  if (!ctx.from) return;
+  const telegramId = ctx.from.id.toString();
+
+  const managerId = getUserManagerId(telegramId);
+  if (!managerId) {
+    await ctx.reply(
+      "👛 You don't have a trading account yet. Place a trade with /up or /down first."
+    );
+    return;
+  }
+
+  // Settled winnings the keeper could not auto-redeem (ranges, plus any binary
+  // whose auto-redeem failed) still need an owner-signed on-chain redeem.
+  const pending = getClaimableSettledPositions(telegramId);
+
+  // Balance already sitting in the manager (auto-redeemed binaries, dust).
+  const summary = await fetchManagerSummary(managerId);
+  const currentBalance = summary?.trading_balance ?? 0;
+
+  // Each settled winner pays exactly its notional ($1 x qty) when redeemed.
+  const pendingPayout = pending.reduce((sum, p) => sum + p.notional_dusdc, 0);
+  const totalBase = currentBalance + pendingPayout;
+
+  if (totalBase <= 0) {
+    await ctx.reply(
+      `💸 <b>Claim Winnings</b>\n\n` +
+        `Nothing to claim right now.\n\n` +
+        `<i>Winning positions become claimable here once they settle.</i>`,
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+
+  const totalStr = formatCoinAmount(BigInt(totalBase), getDusdcDecimals());
+
+  const passPrompt = await ctx.reply(
+    `💸 <b>Claim ${totalStr} dUSDC to your wallet</b>\n\n` +
+      (pending.length > 0
+        ? `This redeems ${pending.length} settled position${pending.length === 1 ? "" : "s"} and moves your Trading Account balance to your wallet.\n\n`
+        : `This moves your Trading Account balance to your wallet.\n\n`) +
+      `Reply with your wallet password to sign.\n` +
+      `⚠️ <i>Your password message will be instantly deleted from chat history for your security.</i>`,
+    { parse_mode: "HTML" }
+  );
+
+  const passCtx = await conversation.waitFor("message:text");
+  const password = passCtx.message.text.trim();
+
+  try {
+    await passCtx.api.deleteMessage(passCtx.chat.id, passCtx.message.message_id);
+  } catch (e) {
+    logger.warn({ error: e }, "Failed to delete user password message");
+  }
+
+  if (password.toLowerCase() === "cancel" || password.startsWith("/")) {
+    try {
+      await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
+    } catch (e) {}
+    await passCtx.reply("❌ Claim cancelled.");
+    return;
+  }
+
+  try {
+    await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
+  } catch (e) {}
+
+  const loadingMsg = await passCtx.reply(
+    `⏳ <b>Claiming ${totalStr} dUSDC to your wallet...</b>`,
+    { parse_mode: "HTML" }
+  );
+
+  try {
+    let result;
+    if (pending.length > 0) {
+      result = await claimSettledPositions({
+        telegramId,
+        password,
+        managerObjectId: managerId,
+        withdrawAmountBase: BigInt(totalBase),
+        positions: pending.map((p): ClaimPositionInput =>
+          p.position_type === "range"
+            ? {
+                kind: "range",
+                oracleId: p.oracle_id,
+                expiryMs: p.expiry_ts,
+                quantityBase: p.notional_dusdc,
+                lowerStrikeDollars: p.lower_strike ?? p.strike,
+                upperStrikeDollars: p.upper_strike ?? p.strike,
+              }
+            : {
+                kind: "binary",
+                oracleId: p.oracle_id,
+                expiryMs: p.expiry_ts,
+                quantityBase: p.notional_dusdc,
+                strikeDollars: p.strike,
+                isUp: Boolean(p.is_up),
+              }
+        ),
+      });
+    } else {
+      result = await withdrawFromManager({
+        telegramId,
+        password,
+        managerObjectId: managerId,
+        amountBase: BigInt(totalBase),
+      });
+    }
+
+    if (result.success && result.digest) {
+      if (pending.length > 0) {
+        for (const p of pending) markPositionRedeemed(p.internal_id);
+      }
+      await syncUserBalanceWithOnchain(telegramId);
+      await passCtx.api.editMessageText(
+        passCtx.chat.id,
+        loadingMsg.message_id,
+        `✅ <b>Claimed Successfully!</b>\n\n` +
+          `💰 Moved <code>${totalStr} dUSDC</code> to your wallet.\n\n` +
+          `🔗 <a href="${getExplorerTxLink(result.digest)}">View on SuiScan Explorer</a>`,
+        { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
+      );
+    } else {
+      await passCtx.api.editMessageText(
+        passCtx.chat.id,
+        loadingMsg.message_id,
+        `❌ <b>Claim Failed</b>\n\n<code>${result.error || "Execution failed"}</code>`,
+        { parse_mode: "HTML" }
+      );
+    }
+  } catch (error) {
+    logger.error({ error, telegramId }, "Claim failed");
+    await passCtx.api.editMessageText(
+      passCtx.chat.id,
+      loadingMsg.message_id,
+      `❌ <b>Claim Error</b>\n\n<code>${error instanceof Error ? error.message : String(error)}</code>`,
+      { parse_mode: "HTML" }
+    );
+  }
+}
+
+export async function claimCommand(ctx: Context) {
+  if (!ctx.from) return;
+  if (!getUserManagerId(ctx.from.id.toString())) {
+    return ctx.reply(
+      "👛 You don't have a trading account yet. Place a trade with /up or /down first."
+    );
+  }
+  return ctx.conversation.enter("claimConversation");
 }
 
 function parseWalletArgs(ctx: Context): string[] {
@@ -599,35 +748,20 @@ async function createWalletCommand(ctx: Context, args: string[]) {
   try {
     const wallet = createEncryptedUserWallet(telegramId, password);
 
-    const fundingMsg = await ctx.reply(
+    const net = getNetworkConfig().network;
+    const gasHint =
+      net === "mainnet"
+        ? "for gas"
+        : "for gas (grab some from the public Sui testnet faucet)";
+    return ctx.reply(
       `✅ <b>Wallet Created</b>\n\n` +
-        `Address:\n<code>${wallet.address}</code>\n\n` +
-        `🎁 <i>Triggering testnet SUI & dUSDC faucet, please wait...</i>`
+        `📍 <b>Your Deposit Address:</b>\n<code>${wallet.address}</code>\n\n` +
+        `To start trading, fund this address on Sui <b>${net}</b>:\n` +
+        `• <b>SUI</b> — ${gasHint}\n` +
+        `• <b>dUSDC</b> — your trading collateral\n\n` +
+        `Then check it with /balance.\n\n` +
+        `🔑 Keep your password safe — it signs every transaction and <b>cannot be recovered</b>.`
     );
-
-    const faucetResult = await triggerFaucetForUser(wallet.address);
-
-    if (faucetResult.success) {
-      await ctx.api.editMessageText(
-        ctx.chat!.id,
-        fundingMsg.message_id,
-        `✅ <b>Wallet Created & Funded</b>\n\n` +
-          `Address:\n<code>${wallet.address}</code>\n\n` +
-          `🎁 <b>Faucet successful:</b> Credited 0.1 SUI and 1,000 dUSDC.\n` +
-          `Tx: <code>${faucetResult.digest}</code>\n\n` +
-          `Keep your password safe. It is required to sign every transaction, and the bot cannot recover it for you.`
-      );
-      await syncUserBalanceWithOnchain(telegramId);
-    } else {
-      await ctx.api.editMessageText(
-        ctx.chat!.id,
-        fundingMsg.message_id,
-        `✅ <b>Wallet Created (Unfunded)</b>\n\n` +
-          `Address:\n<code>${wallet.address}</code>\n\n` +
-          `⚠️ <i>Faucet warning: ${faucetResult.error || "no sponsor key configured"}</i>\n\n` +
-          `Please fund this wallet manually with SUI and dUSDC to trade.`
-      );
-    }
   } catch (error) {
     return ctx.reply(
       `❌ ${error instanceof Error ? error.message : "Failed to create wallet"}`

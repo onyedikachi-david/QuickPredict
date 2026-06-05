@@ -22,8 +22,11 @@ import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { limit } from "@grammyjs/ratelimiter";
 import { conversations, createConversation } from "@grammyjs/conversations";
 import { signTransactionConversation } from "./modules/trading/trading.service";
-import { unlockWalletConversation, withdrawConversation } from "./modules/trading/wallet.service";
+import { unlockWalletConversation, withdrawConversation, claimConversation, walletMenu } from "./modules/trading/wallet.service";
 import { swapConversation } from "./modules/trading/swap.service";
+import { tradeBuilderAssetMenu } from "./modules/trading/trade-builder.service";
+import { marketsMenu, statusMenu } from "./modules/trading/trading-menu.service";
+import { leaderboardMenu, copyboardMenu } from "./modules/social/social-menu.service";
 
 export const initializeBot = () : Bot<Context> => {
 
@@ -75,6 +78,18 @@ export const initializeBot = () : Bot<Context> => {
   protectedBot.use(createConversation(unlockWalletConversation));
   protectedBot.use(createConversation(withdrawConversation));
   protectedBot.use(createConversation(swapConversation));
+  protectedBot.use(createConversation(claimConversation));
+
+  // Register all interactive menus upstream of the modules so any handler — in
+  // any module — can send them. A grammY menu throws "Cannot send menu …" if its
+  // middleware hasn't run before the reply that sends it (e.g. the home-screen
+  // buttons that call into the trading/social menus).
+  protectedBot.use(walletMenu);
+  protectedBot.use(tradeBuilderAssetMenu);
+  protectedBot.use(marketsMenu);
+  protectedBot.use(statusMenu);
+  protectedBot.use(leaderboardMenu);
+  protectedBot.use(copyboardMenu);
 
   // Add Modules
   protectedBot.use(homeModule);
@@ -89,12 +104,14 @@ export const initializeBot = () : Bot<Context> => {
     { command: "wallet", description: "Manage Sui non-custodial wallet" },
     { command: "withdraw", description: "Withdraw SUI or dUSDC to an external address" },
     { command: "swap", description: "Swap between SUI and dUSDC using DeepBook V3" },
+    { command: "claim", description: "Claim settled winnings to your wallet" },
     { command: "markets", description: "View active predict markets" },
     { command: "up", description: "Go long on an asset strike" },
     { command: "down", description: "Go short on an asset strike" },
     { command: "range", description: "Trade range options" },
     { command: "status", description: "Check your open option positions" },
     { command: "balance", description: "Check off-chain and on-chain balance" },
+    { command: "account", description: "Full account overview (wallet, trading account, positions)" },
     { command: "leaderboard", description: "Show top performers leaderboard" },
     { command: "help", description: "Show help and commands list" },
   ]).catch(err => {

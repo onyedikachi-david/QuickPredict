@@ -4,7 +4,6 @@ import { InlineKeyboard } from "grammy";
 import {
   getOrCreateUser,
   getUserBalance,
-  updateUserBalance,
   syncUserBalanceWithOnchain,
 } from "../../db/users";
 import {
@@ -36,13 +35,28 @@ import {
   quoteBinaryTradeOnchain,
   quoteRangeTradeOnchain,
 } from "../../predict/onchain-quotes";
-import { fetchPredictState, fetchVaultSummary } from "../../predict/client";
+import {
+  fetchPredictState,
+  fetchVaultSummary,
+  fetchManagerSummary,
+  fetchManagerPositions,
+  fetchPositionsMinted,
+  fetchPositionsRedeemed,
+} from "../../predict/client";
+import { getUserManagerId } from "../../db/wallets";
+import { getNetworkConfig } from "../../config/network";
+import {
+  getCoinBalance,
+  getDusdcBalance,
+  getDusdcDecimals,
+  formatCoinAmount,
+} from "../../sui/coins";
 import { logger } from "../../helpers/logger";
-import { getFollowers } from "../../db/copy";
+import { getFollowers, getFollowCount } from "../../db/copy";
 import { generateTradeAIContext } from "../../ai/context";
 import type { Position } from "../../db/schema";
 import type { Oracle } from "../../predict/types";
-import { mintPosition, mintRangePosition } from "../../sui/predict";
+import { mintPosition, mintRangePosition, ensurePredictManager } from "../../sui/predict";
 import { getUserWalletAddress } from "../../sui/wallets";
 import { getSuiConfig } from "../../sui/config";
 import { getExplorerTxLink } from "../../sui/transactions";
@@ -80,6 +94,18 @@ export const pendingTrades = new Map<string, PendingTrade>();
 
 export function formatStaleMarker(oracle?: Oracle | null): string {
   return oracle?.stale ? " ⚠️ stale" : "";
+}
+
+// Premium headroom for post-trade ask drift: the contract quotes the mint
+// against post-trade vault state, so the on-chain cost can edge slightly above
+// the preview. Deposit a small buffer over the premium, capped at the wallet
+// balance. Any unused remainder simply stays in the manager (withdrawable).
+const PREMIUM_DEPOSIT_HEADROOM = 1.02;
+
+export function computeDepositBase(premiumBase: number, walletBase: number): bigint {
+  const target = Math.ceil(premiumBase * PREMIUM_DEPOSIT_HEADROOM);
+  const capped = Math.min(walletBase, target);
+  return BigInt(Math.max(0, Math.floor(capped)));
 }
 
 function getExampleAsset(availableAssets: string[]): string {
@@ -626,8 +652,27 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
 
   try {
     const config = getSuiConfig();
-    const managerObjectId = config.managerObjectId || config.predictObjectId;
     const predictObjectId = config.predictObjectId;
+
+    // Ensure the user has an on-chain PredictManager (created once, then reused).
+    const managerResult = await ensurePredictManager(trade.ownerId, password);
+    if (!managerResult.ok) {
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
+      return ctx.reply(
+        `❌ <b>Could not set up your trading account:</b>\n\n<code>${managerResult.error}</code>`
+      );
+    }
+    if (managerResult.created) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        "✅ <i>Trading account ready. Minting your option...</i>"
+      );
+    }
+    const managerObjectId = managerResult.managerId;
+
+    // Fund the premium into the manager; the contract charges it on mint.
+    const depositBase = computeDepositBase(trade.premium, getUserBalance(trade.ownerId));
 
     let result;
     const isRange = trade.positionType === "range";
@@ -636,23 +681,27 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
       result = await mintRangePosition({
         telegramId: trade.ownerId,
         password,
-        managerObjectId,
         predictObjectId,
+        managerObjectId,
         oracleId: trade.oracleId,
-        lowerStrike: trade.lowerStrike!,
-        upperStrike: trade.upperStrike!,
-        coinAmount: parseDusdc(trade.amount).toString(),
+        expiryMs: trade.expiryTs,
+        lowerStrikeDollars: trade.lowerStrike!,
+        upperStrikeDollars: trade.upperStrike!,
+        quantityBase: parseDusdc(trade.amount),
+        depositBase,
       });
     } else {
       result = await mintPosition({
         telegramId: trade.ownerId,
         password,
-        managerObjectId,
         predictObjectId,
+        managerObjectId,
         oracleId: trade.oracleId,
-        strike: trade.strike,
+        expiryMs: trade.expiryTs,
+        strikeDollars: trade.strike,
         isUp: trade.isUp,
-        coinAmount: parseDusdc(trade.amount),
+        quantityBase: parseDusdc(trade.amount),
+        depositBase,
       });
     }
 
@@ -747,8 +796,28 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
 
   try {
     const config = getSuiConfig();
-    const managerObjectId = config.managerObjectId || config.predictObjectId;
     const predictObjectId = config.predictObjectId;
+
+    // Ensure the follower has an on-chain PredictManager before copying.
+    const managerResult = await ensurePredictManager(followerId, password);
+    if (!managerResult.ok) {
+      await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
+      return ctx.reply(
+        `❌ <b>Could not set up your trading account:</b>\n\n<code>${managerResult.error}</code>`
+      );
+    }
+    if (managerResult.created) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        "✅ <i>Trading account ready. Minting your copy position...</i>"
+      );
+    }
+    const managerObjectId = managerResult.managerId;
+    const depositBase = computeDepositBase(
+      sourcePosition.premium_dusdc,
+      getUserBalance(followerId)
+    );
 
     let result;
     const isRange = sourcePosition.position_type === "range";
@@ -757,23 +826,27 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
       result = await mintRangePosition({
         telegramId: followerId,
         password,
-        managerObjectId,
         predictObjectId,
+        managerObjectId,
         oracleId: sourcePosition.oracle_id,
-        lowerStrike: sourcePosition.lower_strike!,
-        upperStrike: sourcePosition.upper_strike!,
-        coinAmount: sourcePosition.notional_dusdc.toString(),
+        expiryMs: sourcePosition.expiry_ts,
+        lowerStrikeDollars: sourcePosition.lower_strike!,
+        upperStrikeDollars: sourcePosition.upper_strike!,
+        quantityBase: sourcePosition.notional_dusdc,
+        depositBase,
       });
     } else {
       result = await mintPosition({
         telegramId: followerId,
         password,
-        managerObjectId,
         predictObjectId,
+        managerObjectId,
         oracleId: sourcePosition.oracle_id,
-        strike: sourcePosition.strike,
+        expiryMs: sourcePosition.expiry_ts,
+        strikeDollars: sourcePosition.strike,
         isUp: Boolean(sourcePosition.is_up),
-        coinAmount: sourcePosition.notional_dusdc,
+        quantityBase: sourcePosition.notional_dusdc,
+        depositBase,
       });
     }
 
@@ -839,40 +912,204 @@ export async function statusCommand(ctx: Context) {
   return ctx.reply(message, { reply_markup: statusMenu });
 }
 
+/**
+ * Recent on-chain activity for a manager, rendered from the indexer's position
+ * open/close events (not the local ledger). Asset symbols are resolved from the
+ * oracle registry (cached).
+ */
+async function formatRecentActivity(managerId: string | null): Promise<string> {
+  if (!managerId) {
+    return `<i>No on-chain activity yet. Place a trade with /up or /down.</i>`;
+  }
+
+  const [minted, redeemed] = await Promise.all([
+    fetchPositionsMinted(managerId),
+    fetchPositionsRedeemed(managerId),
+  ]);
+
+  const events = [
+    ...minted.map((e) => ({ kind: "open" as const, ...e })),
+    ...redeemed.map((e) => ({ kind: "close" as const, ...e })),
+  ]
+    .sort((a, b) => Number(b.checkpoint_timestamp_ms) - Number(a.checkpoint_timestamp_ms))
+    .slice(0, 5);
+
+  if (events.length === 0) return `<i>No on-chain activity yet.</i>`;
+
+  const oracleIds = [...new Set(events.map((e) => e.oracle_id))];
+  const assets = new Map<string, string>();
+  await Promise.all(
+    oracleIds.map(async (id) => {
+      try {
+        const oracle = await getOracleById(id);
+        if (oracle) assets.set(id, oracle.asset_symbol);
+      } catch {
+        /* leave unresolved */
+      }
+    })
+  );
+
+  return events
+    .map((e) => {
+      const asset = assets.get(e.oracle_id) || "";
+      const dir = e.is_up ? "UP" : "DOWN";
+      const label = `${asset ? asset + " " : ""}${dir} $${formatPrice(Number(e.strike) / 1_000_000_000)}`;
+      if (e.kind === "open") {
+        return `📈 Opened ${label} · paid ${formatDusdc(Number(e.cost ?? 0))} dUSDC`;
+      }
+      const payout = Number(e.payout ?? 0);
+      return payout > 0
+        ? `🎉 Won ${label} · +${formatDusdc(payout)} dUSDC`
+        : `❌ Lost ${label}`;
+    })
+    .join("\n");
+}
+
 export async function balanceCommand(ctx: Context) {
   if (!ctx.from) return;
 
   const telegramId = ctx.from.id.toString();
   await syncUserBalanceWithOnchain(telegramId);
   const user = getOrCreateUser(telegramId, ctx.from.username);
+  const managerId = getUserManagerId(telegramId);
 
   let message =
-    `💰 <b>Sui Ledger · Account Balance</b>\n` +
-    `⚡ <i>Your current wallet collateral & performance metrics</i>\n\n` +
-    `• <b>Available Collateral:</b> <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>\n` +
-    `• <b>Cumulative PnL:</b> <code>${user.total_pnl >= 0 ? "+" : ""}${formatDusdc(user.total_pnl)} dUSDC</code>\n` +
-    `• <b>Performance:</b> <code>${user.win_count}W - ${user.loss_count}L</code>\n`;
+    `💰 <b>Account Balance</b>\n` +
+    `⚡ <i>On-chain wallet + trading account</i>\n\n` +
+    `• <b>Wallet Balance:</b> <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>\n` +
+    `• <b>Track Record:</b> <code>${user.win_count}W - ${user.loss_count}L</code>`;
+  if (user.streak > 0) message += ` · 🔥 ${user.streak} streak`;
+  message += `\n`;
 
-  if (user.streak > 0) {
-    message += `• 🔥 <b>Active Streak:</b> <code>${user.streak} wins</code>\n`;
-  }
-
-  message += `\n📝 <b>Recent Transactions:</b>\n`;
-
-  const { getRecentTransactions } = await import("../../db/users");
-  const txs = getRecentTransactions(user.telegram_id, 5);
-
-  if (txs.length === 0) {
-    message += `<i>No recent transactions recorded on this account.</i>`;
-  } else {
-    for (const tx of txs) {
-      const sign = tx.amount >= 0 ? "🟩 +" : "🟥 -";
-      const absAmount = Math.abs(tx.amount);
-      message += `• ${sign}${formatDusdc(absAmount)} dUSDC · <i>${tx.description}</i>\n`;
+  // On-chain Trading Account (PredictManager) — the authoritative balance + PnL.
+  if (managerId) {
+    const summary = await fetchManagerSummary(managerId);
+    if (summary) {
+      const signed = (v: number) => `${v >= 0 ? "+" : ""}${formatDusdc(v)}`;
+      message += `\n🏦 <b>Trading Account (on-chain):</b>\n`;
+      message += `• <b>Claimable:</b> <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · use /claim" : ""}\n`;
+      message += `• <b>Open Exposure:</b> <code>${formatDusdc(summary.open_exposure)} dUSDC</code>\n`;
+      message += `• <b>Realized PnL:</b> <code>${signed(summary.realized_pnl)} dUSDC</code>\n`;
+      message += `• <b>Unrealized PnL:</b> <code>${signed(summary.unrealized_pnl)} dUSDC</code>\n`;
     }
   }
 
+  message += `\n📝 <b>Recent Activity (on-chain):</b>\n`;
+  message += await formatRecentActivity(managerId);
+
   return ctx.reply(message);
+}
+
+/**
+ * Full account overview: on-chain wallet + trading account, open positions and
+ * recent activity from the indexer, plus off-chain track record and social.
+ * Network-aware (Testnet/Mainnet) for the eventual mainnet switch.
+ */
+export async function accountCommand(ctx: Context) {
+  if (!ctx.from) return;
+
+  const telegramId = ctx.from.id.toString();
+  const netLabel = getNetworkConfig().network === "mainnet" ? "Mainnet" : "Testnet";
+  const user = getOrCreateUser(telegramId, ctx.from.username);
+  const address = getUserWalletAddress(telegramId);
+
+  let message = `👤 <b>Account Overview</b> · <code>${netLabel}</code>\n`;
+
+  // ── Wallet (on-chain) ──
+  if (!address) {
+    message +=
+      `\n👛 <b>Wallet:</b> not created yet.\n` +
+      `Create one with <code>/wallet create your-password</code>, then fund it to start trading.`;
+    return ctx.reply(message);
+  }
+
+  await syncUserBalanceWithOnchain(telegramId);
+  let suiStr = "unavailable";
+  let dusdcStr = "unavailable";
+  let lowGas = false;
+  try {
+    const sui = await getCoinBalance(address, "0x2::sui::SUI");
+    suiStr = `${formatCoinAmount(sui, 9)} SUI`;
+    lowGas = sui < 200_000_000n; // < 0.2 SUI
+  } catch (e) {
+    ctx.logger.warn({ error: e }, "account: SUI balance unavailable");
+  }
+  try {
+    const dusdc = await getDusdcBalance(address);
+    dusdcStr = `${formatCoinAmount(dusdc, getDusdcDecimals())} dUSDC`;
+  } catch (e) {
+    ctx.logger.warn({ error: e }, "account: dUSDC balance unavailable");
+  }
+
+  message += `\n👛 <b>Wallet</b>\n`;
+  message += `• <b>Address:</b> <code>${address}</code>\n`;
+  message += `• <b>Gas:</b> <code>${suiStr}</code>${lowGas ? " ⚠️ low — top up SUI" : ""}\n`;
+  message += `• <b>Collateral:</b> <code>${dusdcStr}</code>\n`;
+
+  // ── Trading Account (on-chain PredictManager, via the indexer) ──
+  const managerId = getUserManagerId(telegramId);
+  if (!managerId) {
+    message += `\n🏦 <b>Trading Account:</b> not set up yet — created automatically on your first trade.\n`;
+  } else {
+    const summary = await fetchManagerSummary(managerId);
+    if (summary) {
+      const signed = (v: number) => `${v >= 0 ? "+" : ""}${formatDusdc(v)}`;
+      message += `\n🏦 <b>Trading Account</b>\n`;
+      message += `• <b>Claimable:</b> <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}\n`;
+      message += `• <b>Account value:</b> <code>${formatDusdc(summary.account_value)} dUSDC</code>\n`;
+      message += `• <b>Open exposure:</b> <code>${formatDusdc(summary.open_exposure)} dUSDC</code>\n`;
+      message += `• <b>Realized PnL:</b> <code>${signed(summary.realized_pnl)} dUSDC</code>\n`;
+      message += `• <b>Unrealized PnL:</b> <code>${signed(summary.unrealized_pnl)} dUSDC</code>\n`;
+      message += `• <b>Open positions:</b> <code>${summary.open_positions}</code>`;
+      if (summary.awaiting_settlement_positions) {
+        message += ` (awaiting settlement: ${summary.awaiting_settlement_positions})`;
+      }
+      message += `\n`;
+    } else {
+      message += `\n🏦 <b>Trading Account:</b> <code>${managerId.slice(0, 10)}…</code> (summary unavailable right now)\n`;
+    }
+
+    const positions = await fetchManagerPositions(managerId);
+    const open = positions.filter((p) => Number(p.open_quantity) > 0).slice(0, 5);
+    if (open.length) {
+      message += `\n📊 <b>Open Positions</b>\n`;
+      for (const p of open) {
+        const dir = p.is_up ? "UP" : "DOWN";
+        const asset = p.underlying_asset ? `${p.underlying_asset} ` : "";
+        const strike = formatPrice(Number(p.strike) / 1_000_000_000);
+        const qty = formatDusdc(Number(p.open_quantity));
+        const upnl =
+          p.unrealized_pnl != null
+            ? ` · uPnL ${Number(p.unrealized_pnl) >= 0 ? "+" : ""}${formatDusdc(Number(p.unrealized_pnl))}`
+            : "";
+        message += `• ${asset}${dir} $${strike} — $${qty}${upnl}\n`;
+      }
+    }
+  }
+
+  // ── Recent activity (on-chain) ──
+  message += `\n🧾 <b>Recent Activity</b>\n${await formatRecentActivity(managerId)}\n`;
+
+  // ── Track record (off-chain stat) ──
+  message += `\n📈 <b>Track Record:</b> <code>${user.win_count}W - ${user.loss_count}L</code>`;
+  if (user.streak > 0) message += ` · 🔥 ${user.streak}`;
+  if (user.best_streak > 0) message += ` · best ${user.best_streak}`;
+  message += `\n`;
+
+  // ── Social (off-chain) ──
+  const following = getFollowCount(telegramId);
+  const followers = getFollowers(telegramId).length;
+  if (following || followers) {
+    message += `\n👥 <b>Social:</b> following ${following} · ${followers} follower${followers === 1 ? "" : "s"}\n`;
+  }
+
+  const keyboard = new InlineKeyboard()
+    .text("📊 Markets", "cmd_markets")
+    .text("💼 Positions", "cmd_status")
+    .row()
+    .text("💸 Claim", "cmd_claim");
+
+  return ctx.reply(message, { reply_markup: keyboard });
 }
 
 export async function rangeCommand(ctx: Context) {
@@ -1112,58 +1349,3 @@ function isPositionItm(position: Position, currentPrice: number): boolean {
   return position.is_up ? currentPrice > position.strike : currentPrice < position.strike;
 }
 
-function pendingTradeFromPosition(
-  position: Position,
-  ownerId: string
-): PendingTrade {
-  return {
-    ownerId,
-    positionType: position.position_type,
-    asset: position.asset_symbol,
-    strike: position.strike,
-    lowerStrike: position.lower_strike,
-    upperStrike: position.upper_strike,
-    minutes: Math.max(0, Math.round((position.expiry_ts - Date.now()) / 60000)),
-    expiryTs: position.expiry_ts,
-    amount: position.notional_dusdc / 1_000_000,
-    isUp: Boolean(position.is_up),
-    oracleId: position.oracle_id,
-    premium: position.premium_dusdc,
-    impliedProb: position.implied_prob,
-    expiresAt: Date.now() + PENDING_TRADE_TTL_MS,
-  };
-}
-
-function createCopyTradePosition(
-  sourcePosition: Position,
-  followerId: string
-) {
-  const trade = pendingTradeFromPosition(sourcePosition, followerId);
-
-  updateUserBalance(
-    followerId,
-    -trade.premium,
-    "trade",
-    `Premium for ${formatTradeLabel(trade)}`
-  );
-
-  const position = createPosition({
-    telegramId: followerId,
-    assetSymbol: trade.asset,
-    oracleId: trade.oracleId,
-    expiryTs: trade.expiryTs,
-    strike: trade.strike,
-    isUp: trade.isUp,
-    positionType: trade.positionType,
-    lowerStrike: trade.lowerStrike,
-    upperStrike: trade.upperStrike,
-    notionalDusdc: parseDusdc(trade.amount),
-    premiumDusdc: trade.premium,
-    impliedProb: trade.impliedProb,
-  });
-
-  const txHash = `0x${randomUUID().replaceAll("-", "").slice(0, 16)}...`;
-  updatePositionTxHash(position.internal_id, txHash);
-
-  return { position, trade, txHash };
-}

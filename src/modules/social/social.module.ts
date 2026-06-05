@@ -11,12 +11,10 @@ import {
   tournamentCommand,
   shareCommand,
 } from "./social.service";
-import { leaderboardMenu, copyboardMenu } from "./social-menu.service";
 
 const composer = new Composer<Context>();
 
-composer.use(leaderboardMenu);
-composer.use(copyboardMenu);
+// Menus (leaderboard, copyboard) are registered upstream in bootstrap.
 
 // Social commands
 composer.command(

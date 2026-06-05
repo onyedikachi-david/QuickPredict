@@ -1,4 +1,4 @@
-import { getPredictServerUrl } from "../sui/config";
+import { getPredictServerUrl, getSuiConfig } from "../sui/config";
 import { logger } from "../helpers/logger";
 import type {
   ServerAskBounds,
@@ -11,8 +11,6 @@ import type {
 } from "./types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
-const TESTNET_PREDICT_ID_FALLBACK =
-  "0xc8736204d12f0a7277c86388a68bf8a194b0a14c5538ad13f22cbd8e2a38028a";
 
 function getBaseUrl(): string {
   return getPredictServerUrl().replace(/\/$/, "");
@@ -52,7 +50,7 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 export async function fetchPredictOracles(
-  predictId: string = process.env.PREDICT_OBJECT_ID || TESTNET_PREDICT_ID_FALLBACK
+  predictId: string = getSuiConfig().predictObjectId
 ): Promise<ServerOracle[]> {
   return fetchJson<ServerOracle[]>(`/predicts/${predictId}/oracles`);
 }
@@ -74,13 +72,103 @@ export async function fetchOracleAskBounds(oracleId: string): Promise<ServerAskB
 }
 
 export async function fetchPredictState(
-  predictId: string = process.env.PREDICT_OBJECT_ID || TESTNET_PREDICT_ID_FALLBACK
+  predictId: string = getSuiConfig().predictObjectId
 ): Promise<PredictState> {
   return fetchJson<PredictState>(`/predicts/${predictId}/state`);
 }
 
 export async function fetchVaultSummary(
-  predictId: string = process.env.PREDICT_OBJECT_ID || TESTNET_PREDICT_ID_FALLBACK
+  predictId: string = getSuiConfig().predictObjectId
 ): Promise<VaultSummary> {
   return fetchJson<VaultSummary>(`/predicts/${predictId}/vault/summary`);
+}
+
+/**
+ * Per-user trading account summary from the indexer. All amounts are in dUSDC
+ * base units (1e6). `trading_balance` is the withdrawable manager balance;
+ * realized/unrealized PnL reflect on-chain position outcomes.
+ */
+export interface ManagerSummary {
+  manager_id: string;
+  owner: string;
+  balances: Array<{ quote_asset: string; balance: number }>;
+  trading_balance: number;
+  open_exposure: number;
+  redeemable_value: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  account_value: number;
+  open_positions: number;
+  awaiting_settlement_positions: number;
+}
+
+/**
+ * Fetch a manager summary, returning null instead of throwing when the manager
+ * is not yet indexed (e.g. just created) or the server is unavailable.
+ */
+export async function fetchManagerSummary(managerId: string): Promise<ManagerSummary | null> {
+  try {
+    return await fetchJson<ManagerSummary | null>(`/managers/${managerId}/summary`);
+  } catch (error) {
+    logger.warn({ error, managerId }, "Failed to fetch manager summary");
+    return null;
+  }
+}
+
+/**
+ * On-chain position open/close events for a manager (from the indexer). Strikes
+ * are 1e9-scaled; quantity/cost/payout are dUSDC base units (1e6). Tolerant:
+ * returns [] on error.
+ */
+export interface PositionEvent {
+  oracle_id: string;
+  strike: number | string;
+  is_up: boolean;
+  quantity: number;
+  cost?: number | null;
+  payout?: number | null;
+  checkpoint_timestamp_ms: number | string;
+  digest?: string;
+}
+
+export async function fetchPositionsMinted(managerId: string): Promise<PositionEvent[]> {
+  try {
+    return (await fetchJson<PositionEvent[]>(`/positions/minted?manager_id=${managerId}`)) ?? [];
+  } catch (error) {
+    logger.warn({ error, managerId }, "Failed to fetch minted positions");
+    return [];
+  }
+}
+
+export async function fetchPositionsRedeemed(managerId: string): Promise<PositionEvent[]> {
+  try {
+    return (await fetchJson<PositionEvent[]>(`/positions/redeemed?manager_id=${managerId}`)) ?? [];
+  } catch (error) {
+    logger.warn({ error, managerId }, "Failed to fetch redeemed positions");
+    return [];
+  }
+}
+
+/**
+ * Per-position summary for a manager (open + closed), from the indexer.
+ * Strikes 1e9-scaled; quantities/PnL in dUSDC base units (1e6). Tolerant.
+ */
+export interface ManagerPosition {
+  oracle_id: string;
+  underlying_asset?: string | null;
+  strike: number | string;
+  is_up: boolean;
+  open_quantity: number;
+  unrealized_pnl?: number | null;
+  average_entry_price?: number | string | null;
+  mark_price?: number | string | null;
+}
+
+export async function fetchManagerPositions(managerId: string): Promise<ManagerPosition[]> {
+  try {
+    return (await fetchJson<ManagerPosition[]>(`/managers/${managerId}/positions/summary`)) ?? [];
+  } catch (error) {
+    logger.warn({ error, managerId }, "Failed to fetch manager positions");
+    return [];
+  }
 }

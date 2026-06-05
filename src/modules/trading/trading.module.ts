@@ -8,24 +8,20 @@ import {
   marketsCommand,
   statusCommand,
   balanceCommand,
+  accountCommand,
   rangeCommand,
   confirmTradeCallback,
   cancelTradeCallback,
   confirmCopyCallback,
   skipCopyCallback,
 } from "./trading.service";
-import { walletCommand, walletMenu, withdrawCommand } from "./wallet.service";
+import { walletCommand, withdrawCommand, claimCommand } from "./wallet.service";
 import { swapCommand } from "./swap.service";
-import { tradeBuilderAssetMenu } from "./trade-builder.service";
-import { marketsMenu, statusMenu } from "./trading-menu.service";
 
 const composer = new Composer<Context>();
 
-// Register wallet and trade builder menu middlewares before commands
-composer.use(walletMenu);
-composer.use(tradeBuilderAssetMenu);
-composer.use(marketsMenu);
-composer.use(statusMenu);
+// Menus are registered upstream in bootstrap (before all modules) so any handler
+// can send them — see the menu block in src/bootstrap.ts.
 
 // Trading commands
 composer.command(
@@ -64,6 +60,13 @@ composer.command(
 );
 
 composer.command(
+  "account",
+  handleLogMiddleware("account-command"),
+  chatAction("typing"),
+  accountCommand
+);
+
+composer.command(
   "range",
   handleLogMiddleware("range-command"),
   chatAction("typing"),
@@ -91,6 +94,13 @@ composer.command(
   swapCommand
 );
 
+composer.command(
+  "claim",
+  handleLogMiddleware("claim-command"),
+  chatAction("typing"),
+  claimCommand
+);
+
 // Callback handlers
 composer.callbackQuery(/^confirm_trade_/, confirmTradeCallback);
 composer.callbackQuery(/^cancel_trade_/, cancelTradeCallback);
@@ -101,6 +111,11 @@ composer.callbackQuery(/^copy_skip_/, skipCopyCallback);
 composer.callbackQuery("cmd_status", async (ctx) => {
   await ctx.answerCallbackQuery();
   return statusCommand(ctx);
+});
+
+composer.callbackQuery("cmd_claim", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  return claimCommand(ctx);
 });
 
 export { composer as tradingModule };

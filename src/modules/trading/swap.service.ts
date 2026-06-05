@@ -1,7 +1,7 @@
 import { Context, MyConversation } from "../../common/context";
 import { getUserWalletAddress } from "../../sui/wallets";
-import { getSuiRpcUrl } from "../../sui/config";
-import { getSuiClient } from "../../sui/client";
+import { getNetworkConfig } from "../../config/network";
+import { getRpcClient } from "../../sui/client";
 import {
   getCoinBalance,
   getDusdcBalance,
@@ -167,16 +167,13 @@ export async function swapConversation(
     { parse_mode: "HTML" },
   );
 
-  const rpcUrl = getSuiRpcUrl();
-  const isMainnet =
-    !rpcUrl.includes("testnet") &&
-    !rpcUrl.includes("devnet") &&
-    !rpcUrl.includes("localnet");
-  const network = isMainnet ? "mainnet" : "testnet";
-  const poolKey = isMainnet ? "SUI_USDC" : "SUI_DBUSDC";
+  const cfg = getNetworkConfig();
+  const network = cfg.network;
+  const isMainnet = network === "mainnet";
+  const poolKey = cfg.deepbook.suiUsdcPoolKey;
 
   try {
-    const suiClient = getSuiClient();
+    const suiClient = getRpcClient();
     const dbClient = new DeepBookClient({
       client: suiClient,
       address,
@@ -275,7 +272,7 @@ export async function swapConversation(
   );
 
   try {
-    const suiClient = getSuiClient();
+    const suiClient = getRpcClient();
     const dbClient = new DeepBookClient({
       client: suiClient,
       address,
@@ -362,10 +359,7 @@ export async function swapConversation(
         );
       });
 
-      const explorerLink = getExplorerTxLink(
-        result.digest,
-        isMainnet ? "mainnet" : "testnet",
-      );
+      const explorerLink = getExplorerTxLink(result.digest);
       await passCtx.reply(
         `✅ <b>Swap Executed Successfully!</b>\n\n` +
           `Swapped <b>${amountStr} ${fromToken}</b> for <b>${toToken}</b>.\n` +

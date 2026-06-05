@@ -159,3 +159,17 @@ export function loadUserKeypair(
 export function getUserWalletAddress(telegramId: string): string | null {
   return getUserWallet(telegramId)?.sui_address || null;
 }
+
+/**
+ * Load the protocol sponsor keypair (used by the settlement keeper to pay gas
+ * for permissionless redemptions). Returns null when no sponsor key is set.
+ */
+export function getSponsorKeypair(): Ed25519Keypair | null {
+  const hex = process.env.SPONSOR_PRIVATE_KEY || process.env.PRIVATE_KEY;
+  if (!hex) return null;
+  try {
+    return parsePrivateKey(hex);
+  } catch {
+    return null;
+  }
+}

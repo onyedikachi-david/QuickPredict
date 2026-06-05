@@ -1,181 +1,218 @@
 import { Bot } from "grammy";
 import { Context } from "../common/context";
-import { getOpenPositions, settlePosition } from "../db/positions";
-import { updateUserBalance, updateUserStats } from "../db/users";
-import { getCurrentPriceForOracle } from "../predict/registry";
+import { getOpenPositions, settlePosition, markPositionRedeemed } from "../db/positions";
+import { updateUserStats } from "../db/users";
+import { getOracleById } from "../predict/registry";
 import { formatDusdc, formatPrice } from "../predict/pricing";
 import { InlineKeyboard } from "grammy";
 import { logger } from "../helpers/logger";
 import { updateTournamentScore, getActiveTournament } from "../db/tournaments";
 import { getDatabase } from "../db/schema";
 import { getSuiConfig } from "../sui/config";
+import { getSponsorKeypair } from "../sui/wallets";
+import { getUserManagerId } from "../db/wallets";
+import { redeemPositionPermissionlessWithKeypair } from "../sui/predict";
+import type { Position } from "../db/schema";
+
+// Guard against overlapping polling cycles processing the same position, and cap
+// on-chain redeem retries so a permanently failing position cannot spam the chain.
+const settlementInFlight = new Set<string>();
+const settlementAttempts = new Map<string, number>();
+const MAX_REDEEM_ATTEMPTS = 3;
+const SETTLEMENT_POLL_MS = 20 * 1000;
+
+// Where a settled position's payout ended up, used to tailor the notification.
+type PayoutMode = "trading_account" | "claimable" | "lost";
 
 export function startSettlementKeeper(bot: Bot<Context>) {
-  logger.info("Starting settlement keeper...");
+  logger.info({ pollMs: SETTLEMENT_POLL_MS }, "Starting settlement keeper (polling)...");
 
-  // 1. Hook up the persistent real-time Sui WebSocket subscription
-  connectSuiWebSocket(bot);
-
-  // 2. Keep the 30s polling cycle purely as a resilient backup
-  setInterval(async () => {
+  // Settlement is time-triggered (positions settle at their oracle's expiry).
+  // Sui removed JSON-RPC WebSocket event subscriptions and public nodes don't
+  // serve them, so we poll the indexer for settled oracles. For low-latency
+  // event streaming the recommended path is gRPC SubscribeCheckpoints.
+  const tick = async () => {
     try {
       await checkAndSettlePositions(bot);
     } catch (error) {
       logger.error({ error }, "Settlement keeper error");
     }
-  }, 30 * 1000);
-}
+  };
 
-function connectSuiWebSocket(bot: Bot<Context>) {
-  try {
-    const config = getSuiConfig();
-    const rpcUrl = process.env.SUI_RPC_URL || "https://fullnode.testnet.sui.io";
-    const wsUrl = process.env.SUI_WS_URL || rpcUrl.replace(/^http/, "ws");
-
-    logger.info({ wsUrl }, "Attempting to connect to Sui WebSocket...");
-    const ws = new WebSocket(wsUrl);
-
-    let pingInterval: Timer;
-
-    ws.onopen = () => {
-      logger.info("Sui WebSocket connected successfully.");
-      
-      // Subscribe to all events for our Predict Package
-      const subscribeMessage = {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "suix_subscribeEvent",
-        params: [
-          { Package: config.packageId }
-        ]
-      };
-      ws.send(JSON.stringify(subscribeMessage));
-
-      // Keep connection alive with pings
-      pingInterval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ jsonrpc: "2.0", method: "ping", params: [] }));
-        }
-      }, 20 * 1000);
-    };
-
-    ws.onmessage = async (msg) => {
-      try {
-        const data = JSON.parse(msg.data.toString());
-        if (data.method === "suix_subscribeEvent") {
-          logger.info("Real-time Sui event received via WebSocket, checking settlements...");
-          await checkAndSettlePositions(bot);
-        }
-      } catch (err) {
-        logger.error({ err }, "Error parsing WebSocket message");
-      }
-    };
-
-    ws.onerror = (error: any) => {
-      logger.warn({ error: error?.message || error }, "Sui WebSocket error occurred.");
-    };
-
-    ws.onclose = () => {
-      logger.warn("Sui WebSocket connection closed. Will retry in 30 seconds.");
-      if (pingInterval) clearInterval(pingInterval);
-      setTimeout(() => connectSuiWebSocket(bot), 30 * 1000);
-    };
-  } catch (error) {
-    logger.error({ error }, "Failed to initialize Sui WebSocket client. Polling backup is active.");
-  }
+  void tick(); // run once immediately on startup
+  setInterval(tick, SETTLEMENT_POLL_MS);
 }
 
 export async function checkAndSettlePositions(bot: { api: any }) {
   const now = Date.now();
-  const allOpenPositions = getOpenPositions();
-
-  // Find expired positions
-  const expiredPositions = allOpenPositions.filter(
+  const expiredPositions = getOpenPositions().filter(
     (pos) => pos.expiry_ts <= now && pos.status === "open"
   );
 
   if (expiredPositions.length === 0) return;
 
-  logger.info(`Found ${expiredPositions.length} expired positions to settle`);
+  logger.info(`Found ${expiredPositions.length} expired positions to evaluate`);
 
   for (const position of expiredPositions) {
+    if (settlementInFlight.has(position.internal_id)) continue;
+    settlementInFlight.add(position.internal_id);
     try {
-      // Get settlement price (current price at expiry)
-      const settlementPrice = await getCurrentPriceForOracle(position.oracle_id);
-      if (!settlementPrice) {
-        logger.warn(`No price available for ${position.asset_symbol}`);
-        continue;
-      }
-
-      // Determine if position won
-      let won = false;
-      if (position.position_type === "range") {
-        // Range position: wins if settlement price is between lower and upper strikes
-        const lowerStrike = position.lower_strike ?? position.strike;
-        const upperStrike = position.upper_strike ?? position.strike;
-        won = settlementPrice > lowerStrike && settlementPrice <= upperStrike;
-      } else {
-        // Binary position: standard up/down logic
-        if (position.is_up) {
-          won = settlementPrice > position.strike;
-        } else {
-          won = settlementPrice < position.strike;
-        }
-      }
-
-      // Settle position
-      settlePosition(position.internal_id, settlementPrice, won);
-
-      // Update user balance if won
-      if (won) {
-        updateUserBalance(
-          position.telegram_id,
-          position.notional_dusdc,
-          "payout",
-          `Payout for ${position.asset_symbol} ${position.is_up ? "above" : "below"} $${position.strike}`
-        );
-      }
-
-      // Update user stats
-      const netPnl = won ? position.notional_dusdc - position.premium_dusdc : -position.premium_dusdc;
-      updateUserStats(position.telegram_id, won, netPnl);
-
-      // Update tournament score if active
-      const db = getDatabase();
-      const userGroups = db
-        .prepare("SELECT group_id FROM user_groups WHERE telegram_id = ?")
-        .all(position.telegram_id) as Array<{ group_id: string }>;
-
-      for (const { group_id } of userGroups) {
-        const tournament = getActiveTournament(group_id);
-        if (tournament) {
-          updateTournamentScore(tournament.id, position.telegram_id, netPnl);
-        }
-      }
-
-      // Send DM notification
-      await sendSettlementNotification(bot, position, settlementPrice, won, netPnl);
-
-      logger.info(
-        `Settled position ${position.internal_id} for user ${position.telegram_id}: ${won ? "WON" : "LOST"}`
-      );
+      await settleOnePosition(bot, position);
     } catch (error) {
       logger.error({ error, positionId: position.internal_id }, "Error settling position");
+    } finally {
+      settlementInFlight.delete(position.internal_id);
+    }
+  }
+}
+
+async function settleOnePosition(bot: { api: any }, position: Position) {
+  // The protocol only settles an oracle once the price feed pushes the first
+  // post-expiry update. Until then the position is expired but not settleable,
+  // so we wait and retry on the next cycle.
+  const oracle = await getOracleById(position.oracle_id);
+  if (!oracle) {
+    logger.warn({ oracleId: position.oracle_id }, "No oracle available for settlement");
+    return;
+  }
+
+  const isSettled =
+    oracle.status === "settled" ||
+    (oracle.settlement_price !== undefined && oracle.settlement_price !== null);
+  if (!isSettled) return;
+
+  const settlementPrice = oracle.settlement_price ?? oracle.current_price;
+  if (settlementPrice === undefined || settlementPrice === null) {
+    logger.warn({ oracleId: position.oracle_id }, "Settled oracle has no settlement price");
+    return;
+  }
+
+  // Win/loss follows the on-chain rule: UP wins iff settlement > strike (so DOWN
+  // wins on settlement <= strike); a range wins iff settlement is in (lower, higher].
+  let won: boolean;
+  if (position.position_type === "range") {
+    const lowerStrike = position.lower_strike ?? position.strike;
+    const upperStrike = position.upper_strike ?? position.strike;
+    won = settlementPrice > lowerStrike && settlementPrice <= upperStrike;
+  } else {
+    won = position.is_up
+      ? settlementPrice > position.strike
+      : settlementPrice <= position.strike;
+  }
+
+  const netPnl = won
+    ? position.notional_dusdc - position.premium_dusdc
+    : -position.premium_dusdc;
+
+  let payoutMode: PayoutMode = won ? "claimable" : "lost";
+
+  if (position.position_type === "binary" && won) {
+    // Realize the payout on-chain via the permissionless redeem path. The payout
+    // is deposited into the owner's PredictManager; they withdraw it with /claim.
+    const outcome = await redeemWinningBinary(position);
+    if (outcome === "retry") return; // transient failure — retry next cycle
+    payoutMode = outcome;
+  }
+
+  finalizeSettlement(position, settlementPrice, won, netPnl);
+  if (payoutMode === "trading_account") {
+    // Auto-redeemed on-chain into the manager — mark redeemed so the /claim
+    // flow does not try to redeem it again.
+    markPositionRedeemed(position.internal_id);
+  }
+  await sendSettlementNotification(bot, position, settlementPrice, won, netPnl, payoutMode);
+
+  logger.info(
+    `Settled position ${position.internal_id} for user ${position.telegram_id}: ${won ? "WON" : "LOST"} (${payoutMode})`
+  );
+}
+
+/**
+ * Attempt to redeem a winning binary position on-chain using the sponsor key.
+ * Returns the resolved payout mode, or "retry" when a transient failure should
+ * be retried on a later cycle (without finalizing/notifying yet).
+ */
+async function redeemWinningBinary(position: Position): Promise<PayoutMode | "retry"> {
+  const sponsor = getSponsorKeypair();
+  const managerId = getUserManagerId(position.telegram_id);
+
+  if (!sponsor || !managerId) {
+    logger.warn(
+      { positionId: position.internal_id, hasSponsor: !!sponsor, hasManager: !!managerId },
+      "Cannot auto-redeem winning binary (missing sponsor key or manager); left claimable"
+    );
+    return "claimable";
+  }
+
+  const config = getSuiConfig();
+  const result = await redeemPositionPermissionlessWithKeypair({
+    signer: sponsor,
+    predictObjectId: config.predictObjectId,
+    managerObjectId: managerId,
+    oracleId: position.oracle_id,
+    expiryMs: position.expiry_ts,
+    strikeDollars: position.strike,
+    isUp: Boolean(position.is_up),
+    quantityBase: position.notional_dusdc,
+  });
+
+  if (result.success) {
+    settlementAttempts.delete(position.internal_id);
+    logger.info(
+      { positionId: position.internal_id, digest: result.digest },
+      "Redeemed winning position on-chain into manager"
+    );
+    return "trading_account";
+  }
+
+  const attempts = (settlementAttempts.get(position.internal_id) ?? 0) + 1;
+  settlementAttempts.set(position.internal_id, attempts);
+  logger.error(
+    { positionId: position.internal_id, error: result.error, attempt: attempts },
+    "On-chain permissionless redeem failed"
+  );
+
+  if (attempts < MAX_REDEEM_ATTEMPTS) return "retry";
+
+  // Give up auto-redeeming; the payout remains claimable on-chain by the owner.
+  settlementAttempts.delete(position.internal_id);
+  return "claimable";
+}
+
+/** Record the settlement in local state (position row, user stats, tournaments). */
+function finalizeSettlement(
+  position: Position,
+  settlementPrice: number,
+  won: boolean,
+  netPnl: number
+) {
+  settlePosition(position.internal_id, settlementPrice, won);
+  updateUserStats(position.telegram_id, won, netPnl);
+
+  const db = getDatabase();
+  const userGroups = db
+    .prepare("SELECT group_id FROM user_groups WHERE telegram_id = ?")
+    .all(position.telegram_id) as Array<{ group_id: string }>;
+
+  for (const { group_id } of userGroups) {
+    const tournament = getActiveTournament(group_id);
+    if (tournament) {
+      updateTournamentScore(tournament.id, position.telegram_id, netPnl);
     }
   }
 }
 
 async function sendSettlementNotification(
   bot: { api: any },
-  position: any,
+  position: Position,
   settlementPrice: number,
   won: boolean,
-  netPnl: number
+  netPnl: number,
+  payoutMode: PayoutMode
 ) {
   try {
     const checkmark = won ? "✓" : "✗";
-    
-    // Format position description
+
     let positionDescription: string;
     if (position.position_type === "range") {
       const lowerStrike = position.lower_strike ?? position.strike;
@@ -186,41 +223,38 @@ async function sendSettlementNotification(
       positionDescription = `${position.asset_symbol} ${direction} $${formatPrice(position.strike)}`;
     }
 
-    // Get updated user balance
-    const db = getDatabase();
-    const user = db
-      .prepare("SELECT * FROM users WHERE telegram_id = ?")
-      .get(position.telegram_id) as any;
-
     let message = "";
+    const keyboard = new InlineKeyboard();
 
     if (won) {
+      // Either the keeper already credited the manager (binary auto-redeem), or
+      // the payout is still claimable on-chain (ranges, or a failed auto-redeem).
+      const payoutLine =
+        payoutMode === "trading_account"
+          ? `Your <b>${formatDusdc(position.notional_dusdc)} dUSDC</b> payout was credited to your Trading Account.\n` +
+            `Tap Claim (or /claim) to move it to your wallet.`
+          : `Your <b>${formatDusdc(position.notional_dusdc)} dUSDC</b> payout is ready to claim.\n` +
+            `Tap Claim (or /claim) to redeem it to your wallet.`;
+
       message =
         `🎉 <b>You won!</b>\n\n` +
         `${position.asset_symbol} settled at $${formatPrice(settlementPrice)}\n` +
         `Your call: ${positionDescription} ${checkmark}\n\n` +
-        `Premium paid:      ${formatDusdc(position.premium_dusdc)} dUSDC\n` +
-        `Payout:           ${formatDusdc(position.notional_dusdc)} dUSDC\n` +
-        `Net profit:       +${formatDusdc(netPnl)} dUSDC\n\n` +
-        `Balance: ${formatDusdc(user.dusdc_balance)} dUSDC`;
+        `Premium paid:  ${formatDusdc(position.premium_dusdc)} dUSDC\n` +
+        `Net profit:    +${formatDusdc(netPnl)} dUSDC\n\n` +
+        payoutLine;
 
-      if (user.streak > 0) {
-        message += ` · Streak: ${user.streak} wins 🔥`;
-      }
+      keyboard.text("📤 Share win", `share_${position.internal_id}`);
+      keyboard.text("💸 Claim", "cmd_claim");
+      keyboard.row();
     } else {
       message =
         `😔 <b>Position expired worthless</b>\n\n` +
         `${position.asset_symbol} settled at $${formatPrice(settlementPrice)}\n` +
         `Your call: ${positionDescription} ${checkmark}\n\n` +
-        `Premium lost: ${formatDusdc(position.premium_dusdc)} dUSDC\n\n` +
-        `Balance: ${formatDusdc(user.dusdc_balance)} dUSDC`;
+        `Premium lost: ${formatDusdc(position.premium_dusdc)} dUSDC`;
     }
 
-    const keyboard = new InlineKeyboard();
-
-    if (won) {
-      keyboard.text("📤 Share win", `share_${position.internal_id}`);
-    }
     keyboard.text("🔄 Trade again", "cmd_markets");
 
     await bot.api.sendMessage(position.telegram_id, message, {
@@ -228,6 +262,9 @@ async function sendSettlementNotification(
       parse_mode: "HTML",
     });
   } catch (error) {
-    logger.error({ error, telegramId: position.telegram_id }, "Failed to send settlement notification");
+    logger.error(
+      { error, telegramId: position.telegram_id },
+      "Failed to send settlement notification"
+    );
   }
 }

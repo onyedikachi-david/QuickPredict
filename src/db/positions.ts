@@ -127,6 +127,28 @@ export function settlePosition(
   ).run(payoutDusdc, netPnl, internalId);
 }
 
+/**
+ * Settled, winning positions that have not yet been redeemed on-chain into the
+ * manager — i.e. ranges (owner-gated, keeper can't auto-redeem) and any binary
+ * whose keeper auto-redeem failed. Used by the /claim flow.
+ */
+export function getClaimableSettledPositions(telegramId: string): Position[] {
+  const db = getDatabase();
+  return db
+    .prepare(
+      "SELECT * FROM positions WHERE telegram_id = ? AND status = 'settled' AND payout_dusdc > 0 ORDER BY created_at ASC"
+    )
+    .all(telegramId) as Position[];
+}
+
+/** Mark a position as redeemed on-chain (its payout is now in the manager). */
+export function markPositionRedeemed(internalId: string): void {
+  const db = getDatabase();
+  db.prepare("UPDATE positions SET status = 'redeemed' WHERE internal_id = ?").run(
+    internalId
+  );
+}
+
 export function updatePositionTxHash(internalId: string, txHash: string): void {
   const db = getDatabase();
   db.prepare("UPDATE positions SET tx_hash = ? WHERE internal_id = ?").run(
