@@ -289,3 +289,20 @@ export function formatPrice(price: number): string {
 export function formatPercentage(value: number): string {
   return (value * 100).toFixed(1);
 }
+
+// Human-readable time-to-expiry: minutes under an hour, hours (+min) under a
+// day, days (+hours) beyond — capped at two units so it stays compact.
+//   45 → "45m" · 90 → "1h 30m" · 1061 → "17h 41m" · 5381 → "3d 18h"
+export function formatDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 1) return "<1m";
+  if (m < 60) return `${m}m`;
+  if (m < 1440) {
+    const h = Math.floor(m / 60);
+    const rem = m % 60;
+    return rem ? `${h}h ${rem}m` : `${h}h`;
+  }
+  const d = Math.floor(m / 1440);
+  const h = Math.round((m % 1440) / 60);
+  return h ? `${d}d ${h}h` : `${d}d`;
+}

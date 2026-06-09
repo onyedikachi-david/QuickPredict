@@ -30,28 +30,21 @@ export async function generateLeaderboardMessage(ctx: Context) {
   const period = ctx.session.leaderboardPeriod || "alltime";
   const leaders = getLeaderboard(period, 10);
 
+  const periodLabel = period === "weekly" ? "Weekly" : "All-time";
+
   if (leaders.length === 0) {
-    return (
-      `🏆 <b>DeepBook Predict · Leaderboard</b>\n` +
-      `⚡ <i>Top 10 Performers (${period === "weekly" ? "Weekly" : "All-Time"})</i>\n\n` +
-      `📊 No leaderboard data yet. Be the first to trade!`
-    );
+    return `🏆 <b>Leaderboard</b> · ${periodLabel}\n\nNo data yet — be the first to trade.`;
   }
 
-  let message = `🏆 <b>DeepBook Predict · Leaderboard</b>\n`;
-  message += `⚡ <i>Top 10 Performers (${period === "weekly" ? "Weekly" : "All-Time"})</i>\n\n`;
+  let message = `🏆 <b>Leaderboard</b> · ${periodLabel}\n\n`;
 
   leaders.forEach((user, index) => {
-    const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}.`;
     const username = user.username ? `@${user.username}` : "Anonymous";
-    const pnlSymbol = user.total_pnl >= 0 ? "🟩 +" : "🟥 ";
-    const streak = user.streak > 2 ? ` 🔥 <b>Streak: ${user.streak}</b>` : "";
-
-    message += `${medal} <b>${username}</b>\n`;
-    message += `   ${pnlSymbol}${formatDusdc(user.total_pnl)} dUSDC · <code>${user.win_count}W - ${user.loss_count}L</code>${streak}\n\n`;
+    const pnl = `${user.total_pnl >= 0 ? "+" : ""}${formatDusdc(user.total_pnl)}`;
+    const streak = user.streak > 2 ? ` · ${user.streak} streak` : "";
+    message += `${index + 1}. <b>${username}</b> · <code>${pnl} dUSDC</code> · <code>${user.win_count}W ${user.loss_count}L</code>${streak}\n`;
   });
 
-  message += `🔹 <i>Click the buttons below to toggle periods or instantly mirror the leader!</i>`;
   return message;
 }
 
@@ -61,7 +54,7 @@ export async function generateLeaderboardMessage(ctx: Context) {
 
 export const leaderboardMenu = new Menu<Context>("leaderboard-main")
   .text(
-    (ctx) => (ctx.session.leaderboardPeriod === "weekly" ? "▶️ Weekly" : "Weekly"),
+    (ctx) => (ctx.session.leaderboardPeriod === "weekly" ? "● Weekly" : "Weekly"),
     async (ctx) => {
       ctx.session.leaderboardPeriod = "weekly";
       const text = await generateLeaderboardMessage(ctx);
@@ -69,7 +62,7 @@ export const leaderboardMenu = new Menu<Context>("leaderboard-main")
     }
   )
   .text(
-    (ctx) => (ctx.session.leaderboardPeriod !== "weekly" ? "▶️ All-Time" : "All-Time"),
+    (ctx) => (ctx.session.leaderboardPeriod !== "weekly" ? "● All-time" : "All-time"),
     async (ctx) => {
       ctx.session.leaderboardPeriod = "alltime";
       const text = await generateLeaderboardMessage(ctx);
@@ -91,12 +84,12 @@ export const leaderboardMenu = new Menu<Context>("leaderboard-main")
     const followerId = ctx.from.id.toString();
     const count = getFollowCount(followerId);
     if (count >= COPY_MAX_LEADERS) {
-      await ctx.answerCallbackQuery({ text: `❌ Copy limit reached (${COPY_MAX_LEADERS} leaders max).` });
+      await ctx.answerCallbackQuery({ text: `Copy limit reached (${COPY_MAX_LEADERS} max).` });
       return;
     }
 
     createCopyFollow(followerId, leader.telegram_id);
-    await ctx.answerCallbackQuery({ text: `✅ Now copying @${leader.username}!` });
+    await ctx.answerCallbackQuery({ text: `Now copying @${leader.username}.` });
   });
 
 
@@ -105,7 +98,7 @@ export const leaderboardMenu = new Menu<Context>("leaderboard-main")
 // -------------------------------------------------------------
 
 export async function generateCopyboardMessage(ctx: Context) {
-  if (!ctx.from) return "❌ Error: Unable to identify user.";
+  if (!ctx.from) return "Couldn't identify your account.";
 
   const followerId = ctx.from.id.toString();
   const follows = getActiveFollowsWithUsernames(followerId);
@@ -117,20 +110,18 @@ export async function generateCopyboardMessage(ctx: Context) {
   // Determine current active ratio display (read from first follow or fallback to 1.0)
   const activeRatio = count > 0 ? follows[0].ratio : 1.0;
 
-  let message = `👥 <b>Social Copy-Trading Control Hub</b>\n`;
-  message += `⚡ <i>Configure your mirror trading multipliers and follows</i>\n\n`;
-
-  message += `• <b>Status:</b> <code>${statusLabel}</code>\n`;
-  message += `• <b>Risk Multiplier:</b> <code>${activeRatio}x</code>\n`;
-  message += `• <b>Leaders Followed:</b> <code>${count}</code> / ${COPY_MAX_LEADERS}\n\n`;
+  let message = `👥 <b>Copy trading</b>\n\n`;
+  message += `• Status <code>${statusLabel}</code>\n`;
+  message += `• Multiplier <code>${activeRatio}x</code>\n`;
+  message += `• Following <code>${count}</code> / ${COPY_MAX_LEADERS}\n\n`;
 
   if (count === 0) {
-    message += `💡 <i>You are not copying anyone yet. Go to /leaderboard to find elite traders to copy!</i>`;
+    message += `<i>Not copying anyone yet. Use /leaderboard to find traders to copy.</i>`;
   } else {
-    message += `📋 <b>Follow List:</b>\n`;
+    message += `<b>Following</b>\n`;
     follows.forEach((f, idx) => {
       const username = f.username ? `@${f.username}` : `User ${f.leader_id}`;
-      message += `${idx + 1}. <b>${username}</b> · Multiplier: <code>${f.ratio}x</code>\n`;
+      message += `${idx + 1}. <b>${username}</b> · <code>${f.ratio}x</code>\n`;
     });
   }
 
@@ -174,7 +165,7 @@ export const copyboardMenu = new Menu<Context>("copyboard-main")
     const currentRatio = count > 0 ? follows[0].ratio : 1.0;
     const multipliers = [0.5, 1.0, 2.0];
     for (const m of multipliers) {
-      const label = currentRatio === m ? `✅ ${m}x` : `${m}x`;
+      const label = currentRatio === m ? `● ${m}x` : `${m}x`;
       range.text(label, async (ctx) => {
         const db = getDatabase();
         db.prepare(
@@ -192,7 +183,7 @@ export const copyboardMenu = new Menu<Context>("copyboard-main")
     // Dynamically add Unfollow buttons for each followed leader
     for (const f of follows) {
       const username = f.username ? `@${f.username}` : `ID ${f.leader_id}`;
-      range.text(`❌ Unfollow ${username}`, async (ctx) => {
+      range.text(`Unfollow ${username}`, async (ctx) => {
         removeCopyFollow(followerId, f.leader_id);
         await ctx.answerCallbackQuery({ text: `Stopped copying ${username}` });
         const text = await generateCopyboardMessage(ctx);

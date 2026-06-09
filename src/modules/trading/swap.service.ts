@@ -33,20 +33,20 @@ export async function swapConversation(
   const telegramId = ctx.from.id.toString();
   const address = getUserWalletAddress(telegramId);
   if (!address) {
-    await ctx.reply("❌ Create a wallet first with /wallet create <password>");
+    await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
     return;
   }
 
   // 1. Ask for swap direction
   const directionKeyboard = new InlineKeyboard()
-    .text("SUI ➡️ dUSDC", "swap_dir_SUI_dUSDC")
-    .text("dUSDC ➡️ SUI", "swap_dir_dUSDC_SUI")
+    .text("SUI → dUSDC", "swap_dir_SUI_dUSDC")
+    .text("dUSDC → SUI", "swap_dir_dUSDC_SUI")
     .row()
     .text("✗ Cancel", "swap_cancel");
 
   const dirPrompt = await ctx.reply(
-    `🔄 <b>QuickPredict Swap: Select Direction</b>\n\n` +
-      `Choose which way you would like to swap SUI and dUSDC:`,
+    `🔄 <b>Swap</b>\n\n` +
+      `Pick a direction.`,
     { parse_mode: "HTML", reply_markup: directionKeyboard },
   );
 
@@ -64,7 +64,7 @@ export async function swapConversation(
         dirPrompt.message_id,
       );
     } catch (e) {}
-    await dirCallback.reply("❌ Swap cancelled.");
+    await dirCallback.reply("Swap cancelled.");
     return;
   }
 
@@ -96,9 +96,9 @@ export async function swapConversation(
 
   // 2. Ask for amount
   const amountPrompt = await ctx.reply(
-    `🔄 <b>Swap: ${fromToken} ➡️ ${toToken}</b>\n\n` +
-      `Available Balance: <code>${availableBalanceStr} ${fromToken}</code>\n\n` +
-      `Please reply with the amount of ${fromToken} you wish to swap (or type <code>cancel</code>):`,
+    `🔄 <b>Swap ${fromToken} → ${toToken}</b>\n\n` +
+      `Available <code>${availableBalanceStr} ${fromToken}</code>\n\n` +
+      `Reply with the amount of ${fromToken} to swap, or type <code>cancel</code>.`,
     { parse_mode: "HTML" },
   );
 
@@ -111,12 +111,12 @@ export async function swapConversation(
     const amountCtx = await conversation.waitFor("message:text");
     const val = amountCtx.message.text.trim();
     if (val.toLowerCase() === "cancel" || val === "/cancel") {
-      await amountCtx.reply("❌ Swap cancelled.");
+      await amountCtx.reply("Swap cancelled.");
       return;
     }
     if (val.startsWith("/")) {
       await amountCtx.reply(
-        "❌ Swap cancelled. Please type your command again.",
+        "Swap cancelled. Run the command again when ready.",
       );
       return;
     }
@@ -130,9 +130,9 @@ export async function swapConversation(
           // If SUI -> dUSDC, ensure we leave at least 0.2 SUI for gas fees
           if (isSuiToDusdc && availableBalanceRaw - amountBase < 200_000_000n) {
             await amountCtx.reply(
-              `⚠️ You must leave at least 0.2 SUI in your wallet to cover transaction gas fees. ` +
-                `Maximum SUI you can swap is <code>${formatCoinAmount(availableBalanceRaw - 200_000_000n, 9)} SUI</code>. ` +
-                `Please enter a lower amount:`,
+              `⚠️ Keep at least <code>0.2 SUI</code> for gas. ` +
+                `You can swap up to <code>${formatCoinAmount(availableBalanceRaw - 200_000_000n, 9)} SUI</code>. ` +
+                `Enter a lower amount.`,
             );
             continue;
           }
@@ -140,18 +140,18 @@ export async function swapConversation(
           break;
         } else {
           await amountCtx.reply(
-            `❌ Insufficient balance. You only have ${availableBalanceStr} ${fromToken}. ` +
-              `Please enter a lower amount:`,
+            `Not enough ${fromToken} — you have <code>${availableBalanceStr} ${fromToken}</code>. ` +
+              `Enter a lower amount.`,
           );
         }
       } catch (e) {
         await amountCtx.reply(
-          "❌ Invalid amount format. Please enter a valid number:",
+          "That amount isn't valid. Enter a number.",
         );
       }
     } else {
       await amountCtx.reply(
-        "❌ Invalid amount. Please enter a positive number:",
+        "That amount isn't valid. Enter a positive number.",
       );
     }
   }
@@ -163,7 +163,7 @@ export async function swapConversation(
 
   // 3. Simulate Swap to show estimate and rate
   const simMsg = await ctx.reply(
-    "⏳ <i>Simulating swap output, please wait...</i>",
+    "⏳ <i>Estimating swap output…</i>",
     { parse_mode: "HTML" },
   );
 
@@ -218,16 +218,15 @@ export async function swapConversation(
   // 4. Request Password to execute
   const rateInfo =
     simulatedOut > 0
-      ? `💰 <b>Estimated Output:</b> <code>${simulatedOut.toFixed(4)} ${toToken}</code>\n` +
-        `📈 <b>Estimated Rate:</b> <code>1 ${fromToken} ≈ ${(simulatedOut / parseFloat(amountStr)).toFixed(4)} ${toToken}</code>\n\n`
-      : `⚠️ <i>Could not simulate output. Execution will continue with no slippage protection limit.</i>\n\n`;
+      ? `• Estimated out <code>${simulatedOut.toFixed(4)} ${toToken}</code>\n` +
+        `• Rate <code>1 ${fromToken} ≈ ${(simulatedOut / parseFloat(amountStr)).toFixed(4)} ${toToken}</code>\n\n`
+      : `⚠️ Couldn't estimate output — the swap will run without slippage protection.\n\n`;
 
   const passPrompt = await ctx.reply(
-    `🔄 <b>Confirm Swap</b>\n\n` +
-      `Swapping: <b>${amountStr} ${fromToken} ➡️ ${toToken}</b>\n` +
+    `🔑 <b>Enter your password to sign</b>\n\n` +
+      `Swap <code>${amountStr} ${fromToken}</code> → ${toToken}\n` +
       rateInfo +
-      `Please reply with your wallet password to sign and execute this swap on-chain.\n` +
-      `⚠️ <i>Your password message will be instantly deleted from chat history for your security.</i>`,
+      `<i>Your password message is deleted right after you send it.</i>`,
     { parse_mode: "HTML" },
   );
 
@@ -248,14 +247,14 @@ export async function swapConversation(
     try {
       await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
     } catch (e) {}
-    await passCtx.reply("❌ Swap cancelled.");
+    await passCtx.reply("Swap cancelled.");
     return;
   }
   if (password.startsWith("/")) {
     try {
       await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
     } catch (e) {}
-    await passCtx.reply("❌ Swap cancelled. Please type your command again.");
+    await passCtx.reply("Swap cancelled. Run the command again when ready.");
     return;
   }
 
@@ -265,9 +264,7 @@ export async function swapConversation(
   } catch (e) {}
 
   const loadingMsg = await passCtx.reply(
-    `⏳ <b>Executing Swap on-chain...</b>\n\n` +
-      `Swapping ${amountStr} ${fromToken} for ${toToken}.\n` +
-      `This may take a few seconds...`,
+    `⏳ <i>Unlocking your wallet and preparing the swap…</i>`,
     { parse_mode: "HTML" },
   );
 
@@ -361,16 +358,15 @@ export async function swapConversation(
 
       const explorerLink = getExplorerTxLink(result.digest);
       await passCtx.reply(
-        `✅ <b>Swap Executed Successfully!</b>\n\n` +
-          `Swapped <b>${amountStr} ${fromToken}</b> for <b>${toToken}</b>.\n` +
-          `Tx: <code>${result.digest}</code>\n\n` +
-          `🔗 <a href="${explorerLink}">View on Explorer</a>`,
+        `✅ <b>Swap complete</b>\n\n` +
+          `Swapped <code>${amountStr} ${fromToken}</code> → ${toToken}\n` +
+          `Tx <a href="${explorerLink}">${result.digest.slice(0, 8)}…${result.digest.slice(-4)}</a>`,
         { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
       );
     } else {
       await passCtx.reply(
-        `❌ <b>Swap Execution Failed:</b>\n\n` +
-          `<code>${result.error || "Unknown transaction execution error"}</code>`,
+        `❌ <b>Swap failed</b>\n\n` +
+          `<code>${result.error || "Unknown error"}</code>`,
         { parse_mode: "HTML" },
       );
     }
@@ -381,7 +377,7 @@ export async function swapConversation(
 
     logger.error({ error, telegramId }, "Swap execution crashed");
     await passCtx.reply(
-      `❌ <b>Error processing swap:</b>\n\n` +
+      `❌ <b>Swap failed</b>\n\n` +
         `<code>${error instanceof Error ? error.message : String(error)}</code>`,
       { parse_mode: "HTML" },
     );
@@ -392,7 +388,7 @@ export async function swapCommand(ctx: Context) {
   if (!ctx.from) return;
   const address = getUserWalletAddress(ctx.from.id.toString());
   if (!address) {
-    await ctx.reply("❌ Create a wallet first with /wallet create <password>");
+    await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
     return;
   }
   await ctx.conversation.enter("swapConversation");

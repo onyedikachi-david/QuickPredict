@@ -19,9 +19,25 @@ export interface NetworkConfig {
   predict: { packageId: string; objectId: string; registryId: string };
   dusdc: { type: string; currencyId: string; decimals: number };
   deepbook: { suiUsdcPoolKey: string };
+  fee: { bps: number; treasury: string };
 }
 
 const env = (name: string): string | undefined => process.env[name];
+
+// Frontend trade fee — a broker commission on the premium, routed to a treasury
+// wallet inside the mint PTB (our Polymarket-taker-fee analog). OFF by default
+// (bps = 0): enable by setting BOTH TRADE_FEE_BPS (>0, basis points) and
+// TREASURY_ADDRESS. Capped at 500 bps (5%) as a fat-finger guard, and ignored
+// entirely if no treasury is configured — so a stray bps can never charge a fee
+// with nowhere to send it.
+function readFeeConfig(): { bps: number; treasury: string } {
+  const treasury = (env("TREASURY_ADDRESS") || "").trim();
+  let bps = parseInt(env("TRADE_FEE_BPS") || "0", 10);
+  if (!Number.isFinite(bps) || bps < 0) bps = 0;
+  if (bps > 500) bps = 500;
+  if (!treasury) bps = 0;
+  return { bps, treasury };
+}
 
 const TESTNET: NetworkConfig = {
   network: "testnet",
@@ -42,6 +58,7 @@ const TESTNET: NetworkConfig = {
     decimals: parseInt(env("DUSDC_DECIMALS") || "6", 10),
   },
   deepbook: { suiUsdcPoolKey: "SUI_DBUSDC" },
+  fee: readFeeConfig(),
 };
 
 // DeepBook Predict is NOT on mainnet yet (IDs unknown). This is a guarded
@@ -65,6 +82,7 @@ const MAINNET: NetworkConfig = {
     decimals: parseInt(env("DUSDC_DECIMALS") || "6", 10),
   },
   deepbook: { suiUsdcPoolKey: "SUI_USDC" },
+  fee: readFeeConfig(),
 };
 
 export function getNetwork(): Network {

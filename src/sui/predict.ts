@@ -34,11 +34,17 @@ async function addManagerDeposit(
   walletAddress: string,
   managerObjectId: string,
   dusdcType: string,
-  amountBase: bigint
+  amountBase: bigint,
+  feeBase: bigint = 0n,
+  treasuryAddress?: string
 ): Promise<void> {
   if (amountBase <= 0n) return;
 
-  const coinIds = await selectCoins(walletAddress, dusdcType, amountBase);
+  // Optional broker fee, split from the same coins and sent to the treasury in
+  // this PTB — so the user signs one tx: pay fee + deposit premium + mint.
+  const fee = feeBase > 0n && treasuryAddress ? feeBase : 0n;
+
+  const coinIds = await selectCoins(walletAddress, dusdcType, amountBase + fee);
   let coinArg;
   if (coinIds.length === 1) {
     coinArg = tx.object(coinIds[0]);
@@ -53,12 +59,21 @@ async function addManagerDeposit(
     }
   }
 
-  const [depositCoin] = tx.splitCoins(coinArg, [amountBase]);
-  tx.moveCall({
-    target: `${getSuiConfig().packageId}::predict_manager::deposit`,
-    typeArguments: [dusdcType],
-    arguments: [tx.object(managerObjectId), depositCoin],
-  });
+  const depositCall = (coin: any) =>
+    tx.moveCall({
+      target: `${getSuiConfig().packageId}::predict_manager::deposit`,
+      typeArguments: [dusdcType],
+      arguments: [tx.object(managerObjectId), coin],
+    });
+
+  if (fee > 0n) {
+    const [depositCoin, feeCoin] = tx.splitCoins(coinArg, [amountBase, fee]);
+    depositCall(depositCoin);
+    tx.transferObjects([feeCoin], tx.pure.address(treasuryAddress!));
+  } else {
+    const [depositCoin] = tx.splitCoins(coinArg, [amountBase]);
+    depositCall(depositCoin);
+  }
 }
 
 /** Build a `MarketKey` (binary UP/DOWN) inside `tx`. */
@@ -224,7 +239,9 @@ export async function mintPosition(
     walletAddress,
     params.managerObjectId,
     config.dusdcType,
-    params.depositBase
+    params.depositBase,
+    params.feeBase ?? 0n,
+    params.treasuryAddress
   );
 
   const key = buildMarketKey(
@@ -299,7 +316,9 @@ export async function mintRangePosition(
     walletAddress,
     params.managerObjectId,
     config.dusdcType,
-    params.depositBase
+    params.depositBase,
+    params.feeBase ?? 0n,
+    params.treasuryAddress
   );
 
   const key = buildRangeKey(

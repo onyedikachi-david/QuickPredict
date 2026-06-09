@@ -211,7 +211,7 @@ async function sendSettlementNotification(
   payoutMode: PayoutMode
 ) {
   try {
-    const checkmark = won ? "✓" : "✗";
+    const dirEmoji = position.position_type === "range" ? "↔" : position.is_up ? "📈" : "📉";
 
     let positionDescription: string;
     if (position.position_type === "range") {
@@ -231,28 +231,28 @@ async function sendSettlementNotification(
       // the payout is still claimable on-chain (ranges, or a failed auto-redeem).
       const payoutLine =
         payoutMode === "trading_account"
-          ? `Your <b>${formatDusdc(position.notional_dusdc)} dUSDC</b> payout was credited to your Trading Account.\n` +
+          ? `Your <code>${formatDusdc(position.notional_dusdc)} dUSDC</code> payout is in your trading account.\n` +
             `Tap Claim (or /claim) to move it to your wallet.`
-          : `Your <b>${formatDusdc(position.notional_dusdc)} dUSDC</b> payout is ready to claim.\n` +
-            `Tap Claim (or /claim) to redeem it to your wallet.`;
+          : `Your <code>${formatDusdc(position.notional_dusdc)} dUSDC</code> payout is ready.\n` +
+            `Tap Claim (or /claim) to move it to your wallet.`;
 
       message =
-        `🎉 <b>You won!</b>\n\n` +
-        `${position.asset_symbol} settled at $${formatPrice(settlementPrice)}\n` +
-        `Your call: ${positionDescription} ${checkmark}\n\n` +
-        `Premium paid:  ${formatDusdc(position.premium_dusdc)} dUSDC\n` +
-        `Net profit:    +${formatDusdc(netPnl)} dUSDC\n\n` +
+        `✅ <b>You won</b>\n\n` +
+        `${dirEmoji} ${positionDescription}\n` +
+        `${position.asset_symbol} settled at <code>$${formatPrice(settlementPrice)}</code>\n\n` +
+        `• Premium paid <code>${formatDusdc(position.premium_dusdc)} dUSDC</code>\n` +
+        `• Net profit <code>+${formatDusdc(netPnl)} dUSDC</code>\n\n` +
         payoutLine;
 
       keyboard.text("📤 Share win", `share_${position.internal_id}`);
-      keyboard.text("💸 Claim", "cmd_claim");
+      keyboard.text("🎁 Claim", "cmd_claim");
       keyboard.row();
     } else {
       message =
-        `😔 <b>Position expired worthless</b>\n\n` +
-        `${position.asset_symbol} settled at $${formatPrice(settlementPrice)}\n` +
-        `Your call: ${positionDescription} ${checkmark}\n\n` +
-        `Premium lost: ${formatDusdc(position.premium_dusdc)} dUSDC`;
+        `❌ <b>Position lost</b>\n\n` +
+        `${dirEmoji} ${positionDescription}\n` +
+        `${position.asset_symbol} settled at <code>$${formatPrice(settlementPrice)}</code>\n\n` +
+        `• Premium lost <code>${formatDusdc(position.premium_dusdc)} dUSDC</code>`;
     }
 
     keyboard.text("🔄 Trade again", "cmd_markets");

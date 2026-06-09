@@ -11,7 +11,7 @@ welcome = Welcome!
 ## Language Feature
 
 language-select = Please, select your language
-language-changed = Language successfully changed!
+language-changed = Language changed.
 
 ## Admin Feature
 
@@ -19,4 +19,4 @@ admin-commands-updated = Commands updated.
 
 ## Unhandled Feature
 
-unhandled = Unrecognized command. Try /start
+unhandled = Didn't recognize that. Try /start or /help.

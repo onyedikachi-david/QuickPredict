@@ -37,6 +37,8 @@ export interface MintPositionParams {
   isUp: boolean;
   quantityBase: number;
   depositBase: bigint;
+  feeBase?: bigint; // optional broker fee, split to treasury in the same PTB
+  treasuryAddress?: string;
 }
 
 export interface MintRangePositionParams {
@@ -50,6 +52,8 @@ export interface MintRangePositionParams {
   upperStrikeDollars: number;
   quantityBase: number;
   depositBase: bigint;
+  feeBase?: bigint; // optional broker fee, split to treasury in the same PTB
+  treasuryAddress?: string;
 }
 
 /**

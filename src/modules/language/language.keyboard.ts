@@ -11,7 +11,7 @@ export async function createChangeLanguageKeyboard(ctx: Context) {
   const getLabel = (code: string) => {
     const isActive = code === currentLocaleCode
 
-    return `${isActive ? '✅ ' : ''}${ISO6391.getNativeName(code)}`
+    return `${isActive ? '● ' : ''}${ISO6391.getNativeName(code)}`
   }
 
   return InlineKeyboard.from(

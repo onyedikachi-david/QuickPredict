@@ -30,22 +30,24 @@ export async function startCommand(ctx: Context) {
     .join("  ·  ");
 
   let message =
-    `⚡ <b>QuickPredict</b> — options trading on DeepBook Predict, right inside Telegram. <i>(${net})</i>\n\n`;
+    `⚡ <b>QuickPredict</b> <i>(${net})</i>\n` +
+    `Quick up/down bets on crypto prices.\n` +
+    `Built on DeepBook Predict (Sui).\n\n`;
 
   if (isNewUser) {
     message +=
-      `👋 <b>New here? Three steps:</b>\n` +
-      `1. /wallet — create your non-custodial wallet\n` +
-      `2. Fund it with ${net} SUI (gas) + dUSDC (collateral)\n` +
+      `<b>New here? 3 steps:</b>\n` +
+      `1. /wallet — make your wallet (only you hold the keys)\n` +
+      `2. Add ${net} SUI for fees and dUSDC to trade with\n` +
       `3. /markets — place your first trade\n\n` +
-      `New to options? /help explains every term in plain English.\n\n`;
+      `New to this? /help explains every term in plain English.\n\n`;
   }
 
-  message += `📈 <b>Markets:</b> ${assetPrices || "none active"}\n\n`;
+  message += `<b>Markets:</b> ${assetPrices || "none active"}\n\n`;
   message +=
-    `• /markets — browse &amp; trade\n` +
+    `• /markets — browse and trade\n` +
     `• /account — your full overview\n` +
-    `• /help — all commands &amp; glossary`;
+    `• /help — all commands and glossary`;
 
   const keyboard = new InlineKeyboard()
     .text("📊 Markets", "cmd_markets")
@@ -67,27 +69,27 @@ export async function helpCommand(ctx: Context) {
 
   const message =
     `❓ <b>QuickPredict Help</b> <i>(${net})</i>\n\n` +
-    `<b>🚀 Getting started</b>\n` +
+    `<b>Getting started</b>\n` +
     `/start — home\n` +
     `/wallet — create &amp; fund your wallet\n` +
     `/account — full account overview\n` +
     `/balance — quick balance check\n\n` +
-    `<b>📊 Trading</b>\n` +
-    `/markets — browse markets &amp; build a trade\n` +
+    `<b>Trading</b>\n` +
+    `/markets — browse markets and build a trade\n` +
     `/up — bet a price ends <b>above</b> a strike  ·  <code>/up BTC 71000 10 100</code>\n` +
     `/down — bet a price ends <b>below</b> a strike  ·  <code>/down BTC 70000 15 50</code>\n` +
     `/range — bet a price lands <b>inside a band</b>  ·  <code>/range BTC 70000 72000 15 100</code>\n` +
     `/status — your open positions\n` +
     `<i>(args: ASSET strike minutes amount — or just type the command for menus)</i>\n\n` +
-    `<b>💸 Money</b>\n` +
+    `<b>Money</b>\n` +
     `/swap — swap SUI ⇄ dUSDC\n` +
     `/claim — move settled winnings to your wallet\n` +
     `/withdraw — send SUI or dUSDC to another address\n\n` +
-    `<b>👥 Social</b>\n` +
+    `<b>Social</b>\n` +
     `/leaderboard — top traders\n` +
     `/copy @user — mirror another trader\n` +
     `/tournament — group competitions\n\n` +
-    `📖 <b>New to options?</b> Tap to expand the glossary:\n` +
+    `<b>New to trading?</b> Tap to expand the glossary:\n` +
     `<blockquote expandable>` +
     `<b>Binary option</b> — a yes/no bet: you pick UP or DOWN on a price by a deadline. Right → you get paid; wrong → you lose only what you paid.\n\n` +
     `<b>Strike</b> — the price line your bet is measured against. "UP $71,000" wins if the price is above $71,000 at expiry.\n\n` +

@@ -59,7 +59,7 @@ export const initializeBot = () : Bot<Context> => {
       timeFrame: 1000,
       limit: 3,
       onLimitExceeded: async (ctx) => {
-        await ctx.reply("⚠️ Too many requests! Please slow down.");
+        await ctx.reply("⚠️ Too many requests — please slow down.");
       },
     })
   );

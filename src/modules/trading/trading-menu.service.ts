@@ -7,7 +7,7 @@ import {
   getOracleById,
   getCurrentPrice,
 } from "../../predict/registry";
-import { formatPrice, formatDusdc, formatPercentage } from "../../predict/pricing";
+import { formatPrice, formatDusdc, formatPercentage, formatDuration } from "../../predict/pricing";
 import { getOrCreateUser, syncUserBalanceWithOnchain } from "../../db/users";
 import { getUserManagerId } from "../../db/wallets";
 import { fetchManagerSummary } from "../../predict/client";
@@ -30,7 +30,7 @@ function formatGridHint(oracle: any): string {
 
 export async function generateMarketsMessage(ctx: Context) {
   const assets = await getAvailableAssets();
-  if (assets.length === 0) return "❌ No active markets available.";
+  if (assets.length === 0) return "No active markets right now. Check back shortly.";
 
   const activeAsset = ctx.session.marketsActiveAsset || assets[0];
   ctx.session.marketsActiveAsset = activeAsset;
@@ -41,34 +41,29 @@ export async function generateMarketsMessage(ctx: Context) {
   const price = await getCurrentPrice(activeAsset);
   const assetStale = assetOracles.some((oracle) => oracle.stale);
 
-  let message = `📊 <b>DeepBook Predict · Active Markets</b>\n`;
-  message += `⚡ <i>Live decentralized options order books on Sui network</i>\n\n`;
-
-  if (assetOracles.some((o) => o.stale)) {
-    message += `⚠️ <b>Notice:</b> Sui RPC is experiencing congestion or some feeds are stale. Utilizing fallback feeds.\n\n`;
+  let message = `📊 <b>Markets · ${activeAsset}</b>\n`;
+  message += `Spot <code>$${formatPrice(price || 0)}</code>\n`;
+  if (assetStale) {
+    message += `⚠️ <i>Feeds delayed — showing last known price.</i>\n`;
   }
-
-  message += `🔹 <b>Active Asset:</b> <code>${activeAsset}</code>\n`;
-  message += `🔹 <b>Current Price:</b> <code>$${formatPrice(price || 0)}</code>${assetStale ? " ⚠️ stale" : ""}\n\n`;
-  message += `👇 Select an expiry timeframe to customize your trade:`;
+  message += `\nPick an expiry to start a trade.`;
 
   return message;
 }
 
 export async function generateMarketDetailMessage(ctx: Context) {
   const tb = ctx.session.tradeBuilder;
-  if (!tb || !tb.asset || !tb.minutes) return "❌ Missing selections.";
+  if (!tb || !tb.asset || !tb.minutes) return "Selection expired. Open /markets again.";
 
   const oracle = await findNearestOracle(tb.asset, tb.minutes);
-  if (!oracle) return `❌ No active oracle found for ${tb.asset}`;
+  if (!oracle) return `No active market for ${tb.asset} right now.`;
 
   const minutes = Math.round((oracle.expiry_ts - Date.now()) / 60000);
-  
-  let msg = `🔍 <b>Market Details: ${tb.asset} (${minutes}m)</b>\n\n`;
-  msg += `• <b>Underlying Asset:</b> <code>${tb.asset}</code>\n`;
-  msg += `• <b>Spot Price:</b> <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}\n`;
-  msg += `• <b>Oracle Grid:</b> <code>${formatGridHint(oracle)}</code>\n\n`;
-  msg += `Select position direction to open the trade constructor:`;
+
+  let msg = `<b>${tb.asset} · ${formatDuration(minutes)} expiry</b>\n\n`;
+  msg += `Spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}\n`;
+  msg += `Grid <code>${formatGridHint(oracle)}</code>\n\n`;
+  msg += `Choose a direction.`;
   return msg;
 }
 
@@ -78,72 +73,72 @@ export async function generateMarketDetailMessage(ctx: Context) {
 
 // Submenu: Markets Detail View
 export const marketsDetailMenu = new Menu<Context>("markets-detail")
-  .text("📈 Long (Up)", async (ctx) => {
+  .text("📈 Up", async (ctx) => {
     const tb = ctx.session.tradeBuilder;
     if (!tb || !tb.asset || !tb.minutes) {
-      await ctx.answerCallbackQuery({ text: "Error: Missing selected market info." });
+      await ctx.answerCallbackQuery({ text: "Selection expired — open /markets again." });
       return;
     }
     tb.isUp = true;
     tb.isRange = false;
 
-    await ctx.answerCallbackQuery({ text: "Up option selected." });
+    await ctx.answerCallbackQuery();
     try {
       await ctx.deleteMessage();
     } catch (e) {}
 
     await ctx.reply(
-      `🎯 <b>Trade Builder · Select Strike Price</b>\n` +
-      `Asset: <b>${tb.asset}</b> | Expiry: <b>${tb.minutes}m</b>\n\n` +
-      `Choose strike price level:`,
+      `<b>Strike price</b>\n` +
+      `${tb.asset} · Up · ${formatDuration(tb.minutes)}\n\n` +
+      `Select a strike.`,
       { reply_markup: tradeBuilderStrikeMenu }
     );
   })
-  .text("📉 Short (Down)", async (ctx) => {
+  .text("📉 Down", async (ctx) => {
     const tb = ctx.session.tradeBuilder;
     if (!tb || !tb.asset || !tb.minutes) {
-      await ctx.answerCallbackQuery({ text: "Error: Missing selected market info." });
+      await ctx.answerCallbackQuery({ text: "Selection expired — open /markets again." });
       return;
     }
     tb.isUp = false;
     tb.isRange = false;
 
-    await ctx.answerCallbackQuery({ text: "Down option selected." });
+    await ctx.answerCallbackQuery();
     try {
       await ctx.deleteMessage();
     } catch (e) {}
 
     await ctx.reply(
-      `🎯 <b>Trade Builder · Select Strike Price</b>\n` +
-      `Asset: <b>${tb.asset}</b> | Expiry: <b>${tb.minutes}m</b>\n\n` +
-      `Choose strike price level:`,
+      `<b>Strike price</b>\n` +
+      `${tb.asset} · Down · ${formatDuration(tb.minutes)}\n\n` +
+      `Select a strike.`,
       { reply_markup: tradeBuilderStrikeMenu }
     );
   })
   .row()
-  .text("🎯 Range Option", async (ctx) => {
+  .text("↔ Range", async (ctx) => {
     const tb = ctx.session.tradeBuilder;
     if (!tb || !tb.asset || !tb.minutes) {
-      await ctx.answerCallbackQuery({ text: "Error: Missing selected market info." });
+      await ctx.answerCallbackQuery({ text: "Selection expired — open /markets again." });
       return;
     }
     tb.isUp = true;
     tb.isRange = true;
 
-    await ctx.answerCallbackQuery({ text: "Range option selected." });
+    await ctx.answerCallbackQuery();
     try {
       await ctx.deleteMessage();
     } catch (e) {}
 
     await ctx.reply(
-      `🎯 <b>Trade Builder · Select Lower Strike Price</b>\n` +
-      `Asset: <b>${tb.asset}</b> | Expiry: <b>${tb.minutes}m</b>\n\n` +
-      `Choose the lower boundary price:`,
+      `<b>Lower bound</b>\n` +
+      `${tb.asset} · Range · ${formatDuration(tb.minutes)}\n\n` +
+      `Select the lower strike.`,
       { reply_markup: tradeBuilderRangeLowerMenu }
     );
   })
   .row()
-  .back("⬅️ Back to Markets", async (ctx) => {
+  .back("← Markets", async (ctx) => {
     const text = await generateMarketsMessage(ctx);
     await ctx.editMessageText(text);
   });
@@ -160,7 +155,7 @@ export const marketsMenu = new Menu<Context>("markets-main")
 
     // Tabs row
     for (const asset of assets) {
-      const label = asset === activeAsset ? `▶️ ${asset}` : asset;
+      const label = asset === activeAsset ? `● ${asset}` : asset;
       range.text(label, async (ctx) => {
         ctx.session.marketsActiveAsset = asset;
         const text = await generateMarketsMessage(ctx);
@@ -177,7 +172,7 @@ export const marketsMenu = new Menu<Context>("markets-main")
       const minutes = Math.round((oracle.expiry_ts - Date.now()) / 60000);
       if (minutes <= 0) continue;
 
-      range.text(`⏱️ ${minutes}m (Grid: $${formatPrice(oracle.tick_size)})`, async (ctx) => {
+      range.text(formatDuration(minutes), async (ctx) => {
         // Prepare builder session with selections
         ctx.session.tradeBuilder = {
           asset: activeAsset,
@@ -201,7 +196,7 @@ marketsMenu.register(marketsDetailMenu);
 // -------------------------------------------------------------
 
 export async function generateStatusMessage(ctx: Context) {
-  if (!ctx.from) return "❌ Error: Unable to identify user.";
+  if (!ctx.from) return "Could not identify your account.";
 
   const telegramId = ctx.from.id.toString();
   await syncUserBalanceWithOnchain(telegramId);
@@ -211,23 +206,21 @@ export async function generateStatusMessage(ctx: Context) {
   // Unified balance: spendable wallet + on-chain Trading Account (manager).
   const managerId = getUserManagerId(telegramId);
   const summary = managerId ? await fetchManagerSummary(managerId) : null;
-  let balanceFooter = `• <b>Wallet:</b> <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>`;
+  let balanceFooter = `<b>Balances</b>\n• Wallet <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>`;
   if (summary) {
-    balanceFooter += `\n• <b>Trading Account:</b> <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}`;
+    balanceFooter += `\n• Trading account <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}`;
   }
 
   if (positions.length === 0) {
     return (
-      `💼 <b>Portfolio Status · Active Positions</b>\n` +
-      `⚡ <i>Your open decentralized options positions</i>\n\n` +
-      `• <b>Open Options:</b> <code>0</code> active trades\n` +
+      `💼 <b>Open positions</b>\n\n` +
+      `No open positions.\n\n` +
       `${balanceFooter}\n\n` +
-      `💡 <i>Browse current opportunities using /markets.</i>`
+      `Use /markets to open a trade.`
     );
   }
 
-  let message = `💼 <b>Portfolio Status · Active Positions</b>\n`;
-  message += `⚡ <i>Your open decentralized options positions</i>\n\n`;
+  let message = `💼 <b>Open positions</b>\n\n`;
 
   for (const pos of positions) {
     const oracle = await getOracleById(pos.oracle_id);
@@ -238,19 +231,19 @@ export async function generateStatusMessage(ctx: Context) {
       ? currentPrice > (pos.lower_strike ?? pos.strike) && currentPrice <= (pos.upper_strike ?? pos.strike)
       : pos.is_up ? currentPrice > pos.strike : currentPrice < pos.strike;
 
-    const status = isItm ? "🟩 ITM" : "🟥 OTM";
+    const dot = isItm ? "🟢" : "🔴";
+    const state = isItm ? "ITM" : "OTM";
 
     let label = "";
     if (pos.position_type === "range") {
-      label = `${pos.asset_symbol} between $${formatPrice(pos.lower_strike || pos.strike)} and $${formatPrice(pos.upper_strike || pos.strike)}`;
+      label = `${pos.asset_symbol} between <code>$${formatPrice(pos.lower_strike || pos.strike)}</code> and <code>$${formatPrice(pos.upper_strike || pos.strike)}</code>`;
     } else {
-      label = `${pos.asset_symbol} ${pos.is_up ? "above" : "below"} $${formatPrice(pos.strike)}`;
+      label = `${pos.asset_symbol} ${pos.is_up ? "above" : "below"} <code>$${formatPrice(pos.strike)}</code>`;
     }
 
     message +=
-      `📍 <b>Option:</b> ${label}\n` +
-      `   <b>State:</b> ${status}${formatStaleMarker(oracle)}\n` +
-      `   <b>Expiry:</b> <code>${timeLeft}m</code> remaining · <b>Premium:</b> <code>${formatDusdc(pos.premium_dusdc)} dUSDC</code>\n\n`;
+      `${dot} ${label}\n` +
+      `${state} · ${formatDuration(timeLeft)} left · premium <code>${formatDusdc(pos.premium_dusdc)} dUSDC</code>${formatStaleMarker(oracle)}\n\n`;
   }
 
   message += balanceFooter;
@@ -262,13 +255,13 @@ export async function generateStatusMessage(ctx: Context) {
 // -------------------------------------------------------------
 
 export const statusMenu = new Menu<Context>("status-main")
-  .text("🔄 Refresh Status", async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Syncing portfolio status..." });
+  .text("🔄 Refresh", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Refreshing…" });
     const text = await generateStatusMessage(ctx);
     await ctx.editMessageText(text);
   })
-  .text("⚡ Settle Expired", async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Triggering settlement check..." });
+  .text("Settle expired", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Checking settlement…" });
     await checkAndSettlePositions(ctx);
     const text = await generateStatusMessage(ctx);
     await ctx.editMessageText(text);

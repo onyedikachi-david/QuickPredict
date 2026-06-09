@@ -36,7 +36,7 @@ export async function leaderboardCommand(ctx: Context) {
 
 export async function groupLeaderboardCommand(ctx: Context) {
   if (!ctx.chat || ctx.chat.type === "private") {
-    return ctx.reply("❌ This command only works in groups.");
+    return ctx.reply("This command only works in groups.");
   }
 
   if (!ctx.from) return;
@@ -50,21 +50,20 @@ export async function groupLeaderboardCommand(ctx: Context) {
 
   if (leaders.length === 0) {
     return ctx.reply(
-      "📊 No group leaderboard data yet.\n\nGroup members need to start trading!"
+      "🏆 <b>Group leaderboard</b>\n\nNo data yet — group members need to start trading."
     );
   }
 
-  let message = `🏆 <b>Arena Group Leaderboard</b>\n`;
-  message += `⚡ <i>Active combatants in this channel</i>\n\n`;
+  let message = `🏆 <b>Group leaderboard</b>\n\n`;
 
   leaders.forEach((user, index) => {
-    const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}.`;
+    const rank = `${index + 1}.`;
     const username = user.username ? `@${user.username}` : "Anonymous";
-    const pnlSymbol = user.total_pnl >= 0 ? "🟩 +" : "🟥 ";
-    const streak = user.streak > 2 ? ` 🔥 <b>Streak: ${user.streak}</b>` : "";
+    const pnl = `${user.total_pnl >= 0 ? "+" : ""}${formatDusdc(user.total_pnl)}`;
+    const streak = user.streak > 2 ? ` · ${user.streak} win streak` : "";
 
-    message += `${medal} <b>${username}</b>\n`;
-    message += `   ${pnlSymbol}${formatDusdc(user.total_pnl)} dUSDC · <code>${user.win_count}W - ${user.loss_count}L</code>${streak}\n\n`;
+    message += `${rank} <b>${username}</b>\n`;
+    message += `   <code>${pnl} dUSDC</code> · <code>${user.win_count}W · ${user.loss_count}L</code>${streak}\n\n`;
   });
 
   return ctx.reply(message);
@@ -77,10 +76,10 @@ export async function copyCommand(ctx: Context) {
 
   if (args.length === 0) {
     return ctx.reply(
-      `👥 <b>Mirror Trading Protocol</b>\n\n` +
-        `Automatically replicate positions from elite traders with instant in-chat confirmation prompts.\n\n` +
-        `🔹 <b>Activation:</b> <code>/copy @username</code>\n` +
-        `🔹 <b>Discovery:</b> View most copied accounts via /copyboard`
+      `👥 <b>Copy trading</b>\n\n` +
+        `Mirror another trader — you get a confirmation prompt each time they open a trade.\n\n` +
+        `• Start <code>/copy @username</code>\n` +
+        `• Find traders to copy with /copyboard`
     );
   }
 
@@ -95,20 +94,20 @@ export async function copyCommand(ctx: Context) {
 
   if (!targetUser) {
     return ctx.reply(
-      `❌ User @${targetUsername} not found.\n\n` +
+      `@${targetUsername} not found.\n\n` +
         `They need to use the bot at least once before you can copy them.`
     );
   }
 
   if (targetUser.telegram_id === followerId) {
-    return ctx.reply("❌ You cannot copy yourself!");
+    return ctx.reply("You can't copy yourself.");
   }
 
   // Check limit
   const currentFollows = getFollowCount(followerId);
   if (currentFollows >= COPY_MAX_LEADERS) {
     return ctx.reply(
-      `❌ You can only copy up to ${COPY_MAX_LEADERS} traders.\n\n` +
+      `You can copy up to ${COPY_MAX_LEADERS} traders.\n\n` +
         `Use /uncopy to stop copying someone first.`
     );
   }
@@ -116,8 +115,8 @@ export async function copyCommand(ctx: Context) {
   createCopyFollow(followerId, targetUser.telegram_id);
 
   return ctx.reply(
-    `✅ Now copying @${targetUsername}\n\n` +
-      `You'll receive notifications when they trade.\n` +
+    `👥 <b>Now copying @${targetUsername}</b>\n\n` +
+      `You'll get a prompt when they trade.\n` +
       `Use /uncopy @${targetUsername} to stop.`
   );
 }
@@ -133,12 +132,12 @@ export async function uncopyCommand(ctx: Context) {
     const follows = getActiveFollows(followerId);
 
     if (follows.length === 0) {
-      return ctx.reply("❌ <b>Mirror Protocol:</b> You are not currently copying any traders.");
+      return ctx.reply("You aren't copying any traders right now.");
     }
 
     removeCopyFollow(followerId);
 
-    return ctx.reply(`✅ <b>Mirror Protocol Deactivated:</b> Successfully stopped copying all traders (${follows.length} total).`);
+    return ctx.reply(`Stopped copying all traders (${follows.length} total).`);
   }
 
   const targetUsername = args[0].replace("@", "");
@@ -150,12 +149,12 @@ export async function uncopyCommand(ctx: Context) {
     .get(targetUsername) as { telegram_id: string } | undefined;
 
   if (!targetUser) {
-    return ctx.reply(`❌ User @${targetUsername} not found.`);
+    return ctx.reply(`@${targetUsername} not found.`);
   }
 
   removeCopyFollow(followerId, targetUser.telegram_id);
 
-  return ctx.reply(`✅ Stopped copying @${targetUsername}`);
+  return ctx.reply(`Stopped copying @${targetUsername}.`);
 }
 
 export async function copyboardCommand(ctx: Context) {
@@ -165,7 +164,7 @@ export async function copyboardCommand(ctx: Context) {
 
 export async function tournamentCommand(ctx: Context) {
   if (!ctx.chat || ctx.chat.type === "private") {
-    return ctx.reply("❌ Tournaments only work in groups.");
+    return ctx.reply("Tournaments only work in groups.");
   }
 
   if (!ctx.from) return;
@@ -178,7 +177,7 @@ export async function tournamentCommand(ctx: Context) {
 
   if (args[0] === "status") {
     if (!activeTournament) {
-      return ctx.reply("❌ No active tournament in this group.");
+      return ctx.reply("No active tournament in this group.");
     }
 
     const timeLeft = Math.max(
@@ -188,20 +187,20 @@ export async function tournamentCommand(ctx: Context) {
     const scores = getTournamentScores(activeTournament.id);
 
     let message =
-      `🏆 <b>Tournament Status</b>\n\n` +
-      `Time remaining: ${timeLeft} minutes\n\n` +
-      `<b>Live Rankings</b>\n\n`;
+      `🏆 <b>Tournament</b>\n\n` +
+      `${timeLeft}m left\n\n` +
+      `<b>Live rankings</b>\n\n`;
 
     if (scores.length === 0) {
-      message += `No trades yet. Be the first!`;
+      message += `No trades yet.`;
     } else {
       scores.forEach((score, index) => {
-        const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}.`;
+        const rank = `${index + 1}.`;
         const username = score.username ? `@${score.username}` : "Anonymous";
         const pnl = score.net_pnl >= 0 ? "+" : "";
 
-        message += `${medal} ${username}\n`;
-        message += `   ${pnl}${formatDusdc(score.net_pnl)} dUSDC · ${score.trade_count} trades\n\n`;
+        message += `${rank} ${username}\n`;
+        message += `   <code>${pnl}${formatDusdc(score.net_pnl)} dUSDC</code> · ${score.trade_count} trades\n\n`;
       });
     }
 
@@ -210,41 +209,39 @@ export async function tournamentCommand(ctx: Context) {
 
   if (args[0] === "start") {
     if (activeTournament) {
-      return ctx.reply("❌ A tournament is already active in this group.");
+      return ctx.reply("A tournament is already running in this group.");
     }
 
     // Check if user is admin
     const member = await ctx.getChatMember(ctx.from.id);
     if (member.status !== "administrator" && member.status !== "creator") {
-      return ctx.reply("❌ Only group admins can start tournaments.");
+      return ctx.reply("Only group admins can start tournaments.");
     }
 
     const minutes = parseInt(args[1]);
     if (isNaN(minutes) || minutes < 5 || minutes > 120) {
       return ctx.reply(
-        `❌ Usage: /tournament start &lt;minutes&gt;\n\n` +
+        `Usage: <code>/tournament start &lt;minutes&gt;</code>\n\n` +
           `Duration must be between 5 and 120 minutes.\n` +
-          `Example: /tournament start 30`
+          `Example: <code>/tournament start 30</code>`
       );
     }
 
     const tournament = createTournament(groupId, minutes, ctx.from.id.toString());
 
     return ctx.reply(
-      `🏆 <b>Tournament Started!</b>\n\n` +
-        `Duration: ${minutes} minutes\n` +
-        `All trades during this period count toward the leaderboard.\n\n` +
-        `Use /tournament status to check live rankings.\n\n` +
-        `Good luck! 🎯`
+      `🏆 <b>Tournament started</b>\n\n` +
+        `Runs for ${minutes}m. Every trade in this window counts toward the leaderboard.\n\n` +
+        `Use /tournament status to check live rankings.`
     );
   }
 
   return ctx.reply(
-    `🏆 <b>Group Tournaments</b>\n\n` +
-      `<b>Commands:</b>\n` +
-      `/tournament start &lt;minutes&gt; - Start a tournament (admin only)\n` +
-      `/tournament status - View live rankings\n\n` +
-      `Compete with your group for the highest PnL!`
+    `🏆 <b>Group tournaments</b>\n\n` +
+      `<b>Commands</b>\n` +
+      `• <code>/tournament start &lt;minutes&gt;</code> — start one (admin only)\n` +
+      `• <code>/tournament status</code> — live rankings\n\n` +
+      `Compete with your group for the highest PnL.`
   );
 }
 
@@ -265,21 +262,19 @@ export async function shareCommand(ctx: Context) {
     .get(user.telegram_id) as Position | undefined;
 
   if (!lastPosition) {
-    return ctx.reply("❌ No completed trades to share yet.");
+    return ctx.reply("No settled trades to share yet.");
   }
 
   const won = (lastPosition.payout_dusdc || 0) > 0;
   const direction = lastPosition.is_up ? "above" : "below";
+  const dirEmoji = lastPosition.is_up ? "📈" : "📉";
   const shortHash = lastPosition.tx_hash?.slice(0, 10) || "N/A";
 
   const card =
-    `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `<b>Quick-Predict | ${won ? "WIN ✅" : "LOSS ❌"}</b>\n` +
-    `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `${lastPosition.asset_symbol} ${direction} $${lastPosition.strike} ${won ? "✓" : "✗"}\n` +
-    `Net PnL: ${lastPosition.net_pnl! >= 0 ? "+" : ""}${formatDusdc(lastPosition.net_pnl!)} dUSDC\n` +
-    `Tx: ${shortHash}\n` +
-    `━━━━━━━━━━━━━━━━━━━━━\n` +
+    `${won ? "✅" : "❌"} <b>QuickPredict · ${won ? "Won" : "Lost"}</b>\n\n` +
+    `${dirEmoji} ${lastPosition.asset_symbol} ${direction} <code>$${lastPosition.strike}</code>\n` +
+    `Net PnL <code>${lastPosition.net_pnl! >= 0 ? "+" : ""}${formatDusdc(lastPosition.net_pnl!)} dUSDC</code>\n` +
+    `Tx <code>${shortHash}</code>\n\n` +
     `Trade at @QuickPredictBot`;
 
   return ctx.reply(card);

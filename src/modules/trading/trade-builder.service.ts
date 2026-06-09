@@ -12,6 +12,7 @@ import {
   formatPrice,
   formatDusdc,
   formatPercentage,
+  formatDuration,
   parseDusdc,
   previewFromOnchainAmounts,
   calculatePremiumFromOracle,
@@ -26,6 +27,7 @@ import {
   pendingTrades,
   PENDING_TRADE_TTL_MS,
   formatStaleMarker,
+  computeTradeFee,
   MAX_POSITIONS_PER_USER,
   MAX_TRADES_PER_HOUR,
   PendingTrade,
@@ -57,7 +59,7 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
       if (!ctx.from) return;
       const tb = ctx.session.tradeBuilder;
       if (!tb || !tb.asset || !tb.minutes || (!tb.isRange && !tb.strike) || (tb.isRange && (!tb.lowerStrike || !tb.upperStrike))) {
-        await ctx.answerCallbackQuery({ text: "Error: Missing trade selections." });
+        await ctx.answerCallbackQuery({ text: "Selection expired — open /markets again." });
         return;
       }
 
@@ -69,21 +71,21 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
       // Rate limit checks
       const openCount = getPositionCount(user.telegram_id, "open");
       if (openCount >= MAX_POSITIONS_PER_USER) {
-        await ctx.reply(`⚠️ You have reached the maximum of ${MAX_POSITIONS_PER_USER} open positions.`);
+        await ctx.reply(`⚠️ You've hit the limit of ${MAX_POSITIONS_PER_USER} open positions.`);
         await ctx.menu.close();
         return;
       }
 
       const hourlyTradeCount = getUserTradeCount(user.telegram_id, Date.now() - 60 * 60 * 1000);
       if (hourlyTradeCount >= MAX_TRADES_PER_HOUR) {
-        await ctx.reply(`⚠️ You have reached the maximum of ${MAX_TRADES_PER_HOUR} trades per hour.`);
+        await ctx.reply(`⚠️ You've hit the limit of ${MAX_TRADES_PER_HOUR} trades this hour.`);
         await ctx.menu.close();
         return;
       }
 
       const oracle = await findNearestOracle(tb.asset, tb.minutes);
       if (!oracle) {
-        await ctx.reply(`❌ No active oracle found for ${tb.asset}`);
+        await ctx.reply(`No active market for ${tb.asset} right now.`);
         await ctx.menu.close();
         return;
       }
@@ -91,7 +93,7 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
       const notionalDusdc = parseDusdc(amount);
       const riskCheck = await checkVaultExposure(notionalDusdc);
       if (!riskCheck.allowed) {
-        await ctx.reply(`⚠️ <b>Risk Guard Blocked</b>\n\n${riskCheck.reason}`);
+        await ctx.reply(`⚠️ <b>Trade blocked</b>\n\n${riskCheck.reason}`);
         await ctx.menu.close();
         return;
       }
@@ -99,7 +101,7 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
       let pricing;
       let preview = "";
       const tradeKey = randomUUID();
-      const expiryTime = new Date(oracle.expiry_ts).toUTCString().slice(17, 22);
+      const actualMin = Math.max(0, Math.round((oracle.expiry_ts - Date.now()) / 60000));
 
       if (tb.isRange) {
         const low = tb.lowerStrike!;
@@ -116,8 +118,9 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
           ? previewFromOnchainAmounts(onchainQuote.mintCostDusdc, notionalDusdc, onchainQuote.redeemPayoutDusdc)
           : calculateRangePremiumFromOracle(low, high, oracle, tb.minutes, notionalDusdc);
 
-        if (user.dusdc_balance < pricing.premium_dusdc) {
-          await ctx.reply(`❌ Insufficient balance. Required: ${formatDusdc(pricing.premium_dusdc)} dUSDC.`);
+        const feeBase = computeTradeFee(pricing.premium_dusdc);
+        if (user.dusdc_balance < pricing.premium_dusdc + Number(feeBase)) {
+          await ctx.reply(`Not enough dUSDC — you need <code>${formatDusdc(pricing.premium_dusdc + Number(feeBase))} dUSDC</code>.`);
           await ctx.menu.close();
           return;
         }
@@ -153,15 +156,15 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
         });
 
         preview =
-          `📊 <b>Range Trade Preview</b>\n\n` +
-          `${tb.asset} between $${formatPrice(low)} and $${formatPrice(high)}\n` +
-          `Expiry: ${expiryTime} UTC (in ${tb.minutes} min) · Current ${tb.asset}: $${formatPrice(oracle.current_price)}${formatStaleMarker(oracle)}\n\n` +
-          `Premium:           ${formatDusdc(pricing.premium_dusdc)} dUSDC\n` +
-          `Max payout:       ${formatDusdc(pricing.notional_dusdc)} dUSDC\n` +
-          `Net if correct:   +${formatDusdc(pricing.net_if_correct)} dUSDC\n` +
-          `Implied prob:       ${formatPercentage(pricing.implied_prob)}%\n` +
-          `Pricing: ${formatPricingModel(pricing.pricing_model, pricing.ask_bounds_applied)}\n\n` +
-          `💡 ${aiContext}`;
+          `<b>Review trade</b>\n\n` +
+          `↔ ${tb.asset} between <code>$${formatPrice(low)}</code> and <code>$${formatPrice(high)}</code>\n` +
+          `Expires in ${formatDuration(actualMin)} · spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}\n\n` +
+          `• You pay (premium): <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>\n` +
+          (feeBase > 0n ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n` : "") +
+          `• Max payout: <code>${formatDusdc(pricing.notional_dusdc)} dUSDC</code>\n` +
+          `• Net if you're right: <code>+${formatDusdc(pricing.net_if_correct)} dUSDC</code>\n` +
+          `• Market-implied chance: <code>${formatPercentage(pricing.implied_prob)}%</code>\n\n` +
+          `<i>${aiContext}</i>`;
 
       } else {
         const strike = tb.strike!;
@@ -178,8 +181,9 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
           ? previewFromOnchainAmounts(onchainQuote.mintCostDusdc, notionalDusdc, onchainQuote.redeemPayoutDusdc)
           : calculatePremiumFromOracle(strike, oracle, tb.minutes, notionalDusdc, isUp);
 
-        if (user.dusdc_balance < pricing.premium_dusdc) {
-          await ctx.reply(`❌ Insufficient balance. Required: ${formatDusdc(pricing.premium_dusdc)} dUSDC.`);
+        const feeBase = computeTradeFee(pricing.premium_dusdc);
+        if (user.dusdc_balance < pricing.premium_dusdc + Number(feeBase)) {
+          await ctx.reply(`Not enough dUSDC — you need <code>${formatDusdc(pricing.premium_dusdc + Number(feeBase))} dUSDC</code>.`);
           await ctx.menu.close();
           return;
         }
@@ -213,16 +217,17 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
         });
 
         const direction = isUp ? "above" : "below";
+        const dirEmoji = isUp ? "📈" : "📉";
         preview =
-          `📊 <b>Trade Preview</b>\n\n` +
-          `${tb.asset} ${direction} $${formatPrice(strike)}\n` +
-          `Expiry: ${expiryTime} UTC (in ${tb.minutes} min) · Current ${tb.asset}: $${formatPrice(oracle.current_price)}${formatStaleMarker(oracle)}\n\n` +
-          `Premium:           ${formatDusdc(pricing.premium_dusdc)} dUSDC\n` +
-          `Max payout:       ${formatDusdc(pricing.notional_dusdc)} dUSDC\n` +
-          `Net if correct:   +${formatDusdc(pricing.net_if_correct)} dUSDC\n` +
-          `Implied prob:       ${formatPercentage(pricing.implied_prob)}%\n` +
-          `Pricing: ${formatPricingModel(pricing.pricing_model, pricing.ask_bounds_applied)}\n\n` +
-          `💡 ${aiContext}`;
+          `<b>Review trade</b>\n\n` +
+          `${dirEmoji} ${tb.asset} ${direction} <code>$${formatPrice(strike)}</code>\n` +
+          `Expires in ${formatDuration(actualMin)} · spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}\n\n` +
+          `• You pay (premium): <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>\n` +
+          (feeBase > 0n ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n` : "") +
+          `• Max payout: <code>${formatDusdc(pricing.notional_dusdc)} dUSDC</code>\n` +
+          `• Net if you're right: <code>+${formatDusdc(pricing.net_if_correct)} dUSDC</code>\n` +
+          `• Market-implied chance: <code>${formatPercentage(pricing.implied_prob)}%</code>\n\n` +
+          `<i>${aiContext}</i>`;
       }
 
       const keyboard = new InlineKeyboard()
@@ -243,12 +248,12 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
 // Submenu for choosing Trade Amount for Binary options
 export const tradeBuilderAmountMenu = new Menu<Context>("tb-amount")
   .dynamic(amountMenuDynamic)
-  .back("⬅️ Back");
+  .back("← Back");
 
 // Submenu for choosing Trade Amount for Range options
 export const tradeBuilderRangeAmountMenu = new Menu<Context>("tb-range-amount")
   .dynamic(amountMenuDynamic)
-  .back("⬅️ Back");
+  .back("← Back");
 
 // Submenu for choosing upper strike (Range mode only)
 export const tradeBuilderRangeUpperMenu = new Menu<Context>("tb-range-upper")
@@ -274,7 +279,7 @@ export const tradeBuilderRangeUpperMenu = new Menu<Context>("tb-range-upper")
       }).row();
     }
   })
-  .back("⬅️ Back");
+  .back("← Back");
 
 // Submenu for choosing lower strike (Range mode only)
 export const tradeBuilderRangeLowerMenu = new Menu<Context>("tb-range-lower")
@@ -304,7 +309,7 @@ export const tradeBuilderRangeLowerMenu = new Menu<Context>("tb-range-lower")
       }).row();
     }
   })
-  .back("⬅️ Back");
+  .back("← Back");
 
 // Submenu for choosing strike price (Binary Up/Down mode only)
 export const tradeBuilderStrikeMenu = new Menu<Context>("tb-strike")
@@ -329,10 +334,9 @@ export const tradeBuilderStrikeMenu = new Menu<Context>("tb-strike")
     ];
 
     for (const strike of strikes) {
-      let suffix = "";
-      if (strike === centerStrike) suffix = " (ATM)";
-      else if (strike < centerStrike) suffix = ` (-${Math.round((centerStrike - strike) / oracle.tick_size)}t)`;
-      else suffix = ` (+${Math.round((strike - centerStrike) / oracle.tick_size)}t)`;
+      let suffix = " · spot";
+      if (strike < centerStrike) suffix = ` · $${formatPrice(centerStrike - strike)} below`;
+      else if (strike > centerStrike) suffix = ` · $${formatPrice(strike - centerStrike)} above`;
 
       range.text(`$${formatPrice(strike)}${suffix}`, async (ctx) => {
         if (!ctx.session.tradeBuilder) ctx.session.tradeBuilder = {};
@@ -341,7 +345,7 @@ export const tradeBuilderStrikeMenu = new Menu<Context>("tb-strike")
       }).row();
     }
   })
-  .back("⬅️ Back");
+  .back("← Back");
 
 // Submenu for choosing duration timeframe
 export const tradeBuilderDurationMenu = new Menu<Context>("tb-duration")
@@ -356,7 +360,7 @@ export const tradeBuilderDurationMenu = new Menu<Context>("tb-duration")
       const minutes = Math.round((oracle.expiry_ts - Date.now()) / 60000);
       if (minutes <= 0) continue;
 
-      range.text(`⏱️ ${minutes} min`, async (ctx) => {
+      range.text(formatDuration(minutes), async (ctx) => {
         if (!ctx.session.tradeBuilder) ctx.session.tradeBuilder = {};
         ctx.session.tradeBuilder.minutes = minutes;
         
@@ -368,7 +372,7 @@ export const tradeBuilderDurationMenu = new Menu<Context>("tb-duration")
       }).row();
     }
   })
-  .back("⬅️ Back");
+  .back("← Back");
 
 // Root menu: Choose Asset
 export const tradeBuilderAssetMenu = new Menu<Context>("tb-asset")

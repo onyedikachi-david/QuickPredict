@@ -35,7 +35,7 @@ import {
 
 // Define help submenu
 export const helpMenu = new Menu<Context>("wallet-help")
-  .back("⬅️ Back to Wallet", async (ctx) => {
+  .back("← Wallet", async (ctx) => {
     if (!ctx.from) return;
     const displayUser = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || "User");
     const text = await getWalletOverviewText(ctx.from.id.toString(), displayUser);
@@ -43,15 +43,15 @@ export const helpMenu = new Menu<Context>("wallet-help")
   });
 
 export const walletMenu = new Menu<Context>("wallet-main")
-  .text("🔄 Refresh Balance", async (ctx) => {
+  .text("🔄 Refresh", async (ctx) => {
     if (!ctx.from) return;
-    await ctx.answerCallbackQuery({ text: "Updating balances..." });
+    await ctx.answerCallbackQuery({ text: "Refreshing…" });
     const displayUser = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || "User");
     const text = await getWalletOverviewText(ctx.from.id.toString(), displayUser);
     await ctx.editMessageText(text);
   })
   .row()
-  .text("🔑 Unlock / Verify", async (ctx) => {
+  .text("🔑 Unlock", async (ctx) => {
     if (!ctx.from) return;
     const address = getUserWalletAddress(ctx.from.id.toString());
     if (!address) {
@@ -78,7 +78,7 @@ export const walletMenu = new Menu<Context>("wallet-main")
     await ctx.conversation.enter("withdrawConversation");
   })
   .row()
-  .text("🔄 Swap SUI/dUSDC", async (ctx) => {
+  .text("🔄 Swap", async (ctx) => {
     if (!ctx.from) return;
     const address = getUserWalletAddress(ctx.from.id.toString());
     if (!address) {
@@ -92,7 +92,7 @@ export const walletMenu = new Menu<Context>("wallet-main")
     await ctx.conversation.enter("swapConversation");
   })
   .row()
-  .text("💸 Claim Winnings", async (ctx) => {
+  .text("🎁 Claim", async (ctx) => {
     if (!ctx.from) return;
     if (!getUserManagerId(ctx.from.id.toString())) {
       await ctx.answerCallbackQuery({ text: "No trading account yet — place a trade first." });
@@ -104,17 +104,16 @@ export const walletMenu = new Menu<Context>("wallet-main")
     } catch (e) {}
     await ctx.conversation.enter("claimConversation");
   })
-  .submenu("❓ Security & Help", "wallet-help", async (ctx) => {
+  .submenu("❓ Security", "wallet-help", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      `🛡️ <b>Sui Non-Custodial Wallet Security</b>\n\n` +
-      `Your wallet's private key is stored completely encrypted using AES-256-GCM. ` +
-      `The decryption key is derived using PBKDF2 from the password you chose during wallet creation.\n\n` +
-      `🔑 <b>Important Security Rules:</b>\n` +
-      `• The bot does <b>NOT</b> store your password on any database or server.\n` +
-      `• It is impossible to execute any transaction without your password.\n` +
-      `• If you lose your password, there is absolutely <b>NO way</b> to recover it. Please write down any backup info safely.\n` +
-      `• To trade, send SUI (for gas) and dUSDC (for trading collateral) to your deposit address.`
+      `👛 <b>Wallet security</b>\n\n` +
+      `Non-custodial — only you hold the keys. Your private key is encrypted with AES-256-GCM, and the key to unlock it is derived from your password with PBKDF2.\n\n` +
+      `⚠️ <b>Keep your password safe:</b>\n` +
+      `• The bot never stores your password — not in any database or server.\n` +
+      `• No transaction can be signed without it.\n` +
+      `• If you lose it, it cannot be recovered. Back it up somewhere safe.\n` +
+      `• To trade, send SUI (gas) and dUSDC (collateral) to your deposit address.`
     );
   });
 
@@ -126,11 +125,10 @@ async function getWalletOverviewText(telegramId: string, displayUser: string): P
   const wallet = getUserWallet(telegramId);
   if (!wallet) {
     return (
-      `👛 <b>Sui Non-Custodial Wallet</b>\n\n` +
-      `You do not have a wallet yet.\n\n` +
-      `Create one with:\n` +
-      `<code>/wallet create your-password</code>\n\n` +
-      `Use at least 8 characters. Keep this password safe — it is needed to sign transactions.`
+      `👛 <b>Wallet</b>\n\n` +
+      `You don't have a wallet yet — only you hold the keys once you make one.\n\n` +
+      `Create one with <code>/wallet create your-password</code>\n\n` +
+      `Use at least 8 characters and keep it safe — it signs every transaction and can't be recovered.`
     );
   }
 
@@ -158,14 +156,13 @@ async function getWalletOverviewText(telegramId: string, displayUser: string): P
   }
 
   return (
-    `👛 <b>Your Sui Wallet Overview</b>\n\n` +
-    `👤 <b>User:</b> <code>${displayUser}</code>\n` +
-    `📍 <b>Deposit Address:</b>\n` +
+    `👛 <b>Wallet</b> · <code>${displayUser}</code>\n\n` +
+    `<b>Deposit address</b>\n` +
     `<code>${wallet.sui_address}</code>\n\n` +
-    `💰 <b>Onchain Balances:</b>\n` +
-    `• <b>SUI (Gas):</b> <code>${suiBalance}</code>\n` +
-    `• <b>dUSDC (Collateral):</b> <code>${dusdcBalance}</code>\n\n` +
-    `✨ <i>This wallet is completely non-custodial. All operations require your secret password to sign.</i>`
+    `<b>Balances</b>\n` +
+    `• Gas <code>${suiBalance}</code>\n` +
+    `• Collateral <code>${dusdcBalance}</code>\n\n` +
+    `<i>Non-custodial — only you hold the keys. Every action needs your password to sign.</i>`
   );
 }
 
@@ -178,15 +175,15 @@ export async function unlockWalletConversation(
   const telegramId = ctx.from.id.toString();
   const address = getUserWalletAddress(telegramId);
   if (!address) {
-    await ctx.reply("❌ Create a wallet first with /wallet create <password>");
+    await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
     return;
   }
 
   // Ask for password
   const promptMsg = await ctx.reply(
-    `🔑 <b>Verify Wallet Password</b>\n\n` +
-      `Please reply with your wallet password to verify decryption capabilities.\n\n` +
-      `⚠️ <i>Your password message will be instantly deleted from chat history for your security.</i>`,
+    `🔑 <b>Enter your password to unlock</b>\n\n` +
+      `This checks that your password decrypts your wallet.\n\n` +
+      `<i>Your password message is deleted right after you send it.</i>`,
     { parse_mode: "HTML" }
   );
 
@@ -194,11 +191,11 @@ export async function unlockWalletConversation(
   const responseCtx = await conversation.waitFor("message:text");
   const password = responseCtx.message.text.trim();
   if (password.toLowerCase() === "cancel" || password === "/cancel") {
-    await responseCtx.reply("❌ Verification cancelled.");
+    await responseCtx.reply("Unlock cancelled.");
     return;
   }
   if (password.startsWith("/")) {
-    await responseCtx.reply("❌ Verification cancelled. Please type your command again.");
+    await responseCtx.reply("Unlock cancelled. Run the command again when ready.");
     return;
   }
 
@@ -224,16 +221,15 @@ export async function unlockWalletConversation(
     // Attempt decryption
     loadUserKeypair(telegramId, password);
     await responseCtx.reply(
-      `✅ <b>Decryption Verified Successfully!</b>\n\n` +
-        `Signer Address: <code>${address}</code>\n\n` +
-        `Your password is correct and your wallet is fully operational!`,
+      `✅ <b>Wallet unlocked</b>\n\n` +
+        `Signer <code>${address}</code>`,
       { parse_mode: "HTML" }
     );
   } catch (error) {
     await responseCtx.reply(
-      `❌ <b>Decryption Failed</b>\n\n` +
+      `❌ <b>Couldn't unlock your wallet</b>\n\n` +
         `<code>${error instanceof Error ? error.message : "Invalid password"}</code>\n\n` +
-        `Please make sure your password is correct and try again.`,
+        `Check your password and try again.`,
       { parse_mode: "HTML" }
     );
   }
@@ -247,7 +243,7 @@ export async function withdrawConversation(
   const telegramId = ctx.from.id.toString();
   const address = getUserWalletAddress(telegramId);
   if (!address) {
-    await ctx.reply("❌ Create a wallet first with /wallet create <password>");
+    await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
     return;
   }
 
@@ -259,8 +255,8 @@ export async function withdrawConversation(
     .text("✗ Cancel", "withdraw_cancel");
 
   const assetPrompt = await ctx.reply(
-    `📤 <b>Withdrawal: Select Token</b>\n\n` +
-      `Please select the token you wish to withdraw from your wallet:`,
+    `📤 <b>Withdraw</b>\n\n` +
+      `Pick a token to send.`,
     { parse_mode: "HTML", reply_markup: tokenKeyboard }
   );
 
@@ -275,7 +271,7 @@ export async function withdrawConversation(
     try {
       await assetCallback.api.deleteMessage(assetCallback.chat!.id, assetPrompt.message_id);
     } catch (e) {}
-    await assetCallback.reply("❌ Withdrawal cancelled.");
+    await assetCallback.reply("Withdrawal cancelled.");
     return;
   }
 
@@ -286,9 +282,8 @@ export async function withdrawConversation(
 
   // 2. Ask for destination address
   const addrPrompt = await ctx.reply(
-    `📤 <b>Withdrawal: Destination Address</b>\n\n` +
-      `Selected: <b>${token}</b>\n\n` +
-      `Please reply with the destination Sui wallet address (e.g. <code>0x...</code>) where you want to send your ${token}.`,
+    `📤 <b>Withdraw ${token}</b>\n\n` +
+      `Reply with the destination Sui address (starts with <code>0x</code>).`,
     { parse_mode: "HTML" }
   );
 
@@ -297,18 +292,18 @@ export async function withdrawConversation(
     const addrCtx = await conversation.waitFor("message:text");
     const val = addrCtx.message.text.trim();
     if (val.toLowerCase() === "cancel" || val === "/cancel") {
-      await addrCtx.reply("❌ Withdrawal cancelled.");
+      await addrCtx.reply("Withdrawal cancelled.");
       return;
     }
     if (val.startsWith("/")) {
-      await addrCtx.reply("❌ Withdrawal cancelled. Please type your command again.");
+      await addrCtx.reply("Withdrawal cancelled. Run the command again when ready.");
       return;
     }
     if (/^0x[0-9a-fA-F]{64}$/.test(val)) {
       destAddress = val;
       break;
     }
-    await addrCtx.reply("❌ Invalid Sui address format. Please reply with a valid 66-character hex address starting with 0x:");
+    await addrCtx.reply("That isn't a valid Sui address. It should be 66 characters starting with <code>0x</code>.");
   }
 
   // Delete previous prompt
@@ -329,11 +324,10 @@ export async function withdrawConversation(
 
   // 3. Ask for amount
   const amountPrompt = await ctx.reply(
-    `📤 <b>Withdrawal: Amount</b>\n\n` +
-      `Asset: <b>${token}</b>\n` +
-      `To: <code>${destAddress}</code>\n` +
-      `Available Balance: <code>${formattedBalance} ${token}</code>\n\n` +
-      `Please reply with the amount you wish to withdraw:`,
+    `📤 <b>Withdraw ${token}</b>\n\n` +
+      `To <code>${destAddress}</code>\n` +
+      `Available <code>${formattedBalance} ${token}</code>\n\n` +
+      `Reply with the amount to send.`,
     { parse_mode: "HTML" }
   );
 
@@ -343,11 +337,11 @@ export async function withdrawConversation(
     const amountCtx = await conversation.waitFor("message:text");
     const val = amountCtx.message.text.trim();
     if (val.toLowerCase() === "cancel" || val === "/cancel") {
-      await amountCtx.reply("❌ Withdrawal cancelled.");
+      await amountCtx.reply("Withdrawal cancelled.");
       return;
     }
     if (val.startsWith("/")) {
-      await amountCtx.reply("❌ Withdrawal cancelled. Please type your command again.");
+      await amountCtx.reply("Withdrawal cancelled. Run the command again when ready.");
       return;
     }
     const num = parseFloat(val);
@@ -357,19 +351,19 @@ export async function withdrawConversation(
         amountBase = parseCoinAmount(val, decimals);
         if (amountBase <= rawBalance) {
           if (token === "SUI" && amountBase === rawBalance) {
-            await amountCtx.reply("⚠️ You cannot withdraw 100% of your SUI balance as some SUI is needed to pay for gas fees. Please enter a lower amount:");
+            await amountCtx.reply("⚠️ Keep some SUI for gas — you can't withdraw your full SUI balance. Enter a lower amount.");
             continue;
           }
           amountStr = val;
           break;
         } else {
-          await amountCtx.reply(`❌ Insufficient balance. You only have ${formattedBalance} ${token}. Please enter a lower amount:`);
+          await amountCtx.reply(`Not enough ${token} — you have <code>${formattedBalance} ${token}</code>. Enter a lower amount.`);
         }
       } catch (e) {
-        await amountCtx.reply("❌ Invalid amount format. Please enter a valid number:");
+        await amountCtx.reply("That amount isn't valid. Enter a number.");
       }
     } else {
-      await amountCtx.reply("❌ Invalid amount. Please enter a positive number:");
+      await amountCtx.reply("That amount isn't valid. Enter a positive number.");
     }
   }
 
@@ -380,11 +374,9 @@ export async function withdrawConversation(
 
   // 4. Ask for password
   const passPrompt = await ctx.reply(
-    `🔑 <b>Withdrawal: Sign & Execute</b>\n\n` +
-      `Sending: <b>${amountStr} ${token}</b>\n` +
-      `To: <code>${destAddress}</code>\n\n` +
-      `Please reply with your wallet password to sign and execute this withdrawal on-chain.\n` +
-      `⚠️ <i>Your password message will be instantly deleted from chat history for your security.</i>`,
+    `🔑 <b>Enter your password to sign</b>\n\n` +
+      `Send <code>${amountStr} ${token}</code> to <code>${destAddress}</code>\n\n` +
+      `<i>Your password message is deleted right after you send it.</i>`,
     { parse_mode: "HTML" }
   );
 
@@ -405,14 +397,14 @@ export async function withdrawConversation(
     try {
       await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
     } catch (e) {}
-    await passCtx.reply("❌ Withdrawal cancelled.");
+    await passCtx.reply("Withdrawal cancelled.");
     return;
   }
   if (password.startsWith("/")) {
     try {
       await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
     } catch (e) {}
-    await passCtx.reply("❌ Withdrawal cancelled. Please type your command again.");
+    await passCtx.reply("Withdrawal cancelled. Run the command again when ready.");
     return;
   }
 
@@ -425,9 +417,7 @@ export async function withdrawConversation(
   } catch (e) {}
 
   const loadingMsg = await passCtx.reply(
-    `⏳ <b>Processing on-chain...</b>\n\n` +
-      `Sending ${amountStr} ${token} to <code>${destAddress}</code>.\n` +
-      `This may take a few seconds...`,
+    `⏳ <i>Unlocking your wallet and sending the transaction…</i>`,
     { parse_mode: "HTML" }
   );
 
@@ -479,18 +469,18 @@ export async function withdrawConversation(
       await passCtx.api.editMessageText(
         passCtx.chat.id,
         loadingMsg.message_id,
-        `✅ <b>Withdrawal Successful!</b>\n\n` +
-          `💰 <b>Sent:</b> <code>${amountStr} ${token}</code>\n` +
-          `📍 <b>To Address:</b>\n<code>${destAddress}</code>\n\n` +
-          `🔗 <a href="${getExplorerTxLink(result.digest)}">View on SuiScan Explorer</a>`,
+        `✅ <b>Withdrawal sent</b>\n\n` +
+          `Sent <code>${amountStr} ${token}</code>\n` +
+          `To <code>${destAddress}</code>\n` +
+          `Tx <a href="${getExplorerTxLink(result.digest)}">${result.digest.slice(0, 8)}…${result.digest.slice(-4)}</a>`,
         { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
       );
     } else {
       await passCtx.api.editMessageText(
         passCtx.chat.id,
         loadingMsg.message_id,
-        `❌ <b>Withdrawal Failed</b>\n\n` +
-          `Error: <code>${result.error || "Execution failed"}</code>`,
+        `❌ <b>Withdrawal failed</b>\n\n` +
+          `<code>${result.error || "Unknown error"}</code>`,
         { parse_mode: "HTML" }
       );
     }
@@ -499,7 +489,7 @@ export async function withdrawConversation(
     await passCtx.api.editMessageText(
       passCtx.chat.id,
       loadingMsg.message_id,
-      `❌ <b>Withdrawal Error</b>\n\n` +
+      `❌ <b>Withdrawal failed</b>\n\n` +
         `<code>${error instanceof Error ? error.message : String(error)}</code>`,
       { parse_mode: "HTML" }
     );
@@ -510,7 +500,7 @@ export async function withdrawCommand(ctx: Context) {
   if (!ctx.from) return;
   const address = getUserWalletAddress(ctx.from.id.toString());
   if (!address) {
-    return ctx.reply("❌ Create a wallet first with /wallet create <password>");
+    return ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
   }
   return ctx.conversation.enter("withdrawConversation");
 }
@@ -531,7 +521,7 @@ export async function claimConversation(
   const managerId = getUserManagerId(telegramId);
   if (!managerId) {
     await ctx.reply(
-      "👛 You don't have a trading account yet. Place a trade with /up or /down first."
+      "No trading account yet — place a trade with /up or /down first."
     );
     return;
   }
@@ -550,7 +540,7 @@ export async function claimConversation(
 
   if (totalBase <= 0) {
     await ctx.reply(
-      `💸 <b>Claim Winnings</b>\n\n` +
+      `🎁 <b>Claim</b>\n\n` +
         `Nothing to claim right now.\n\n` +
         `<i>Winning positions become claimable here once they settle.</i>`,
       { parse_mode: "HTML" }
@@ -561,12 +551,12 @@ export async function claimConversation(
   const totalStr = formatCoinAmount(BigInt(totalBase), getDusdcDecimals());
 
   const passPrompt = await ctx.reply(
-    `💸 <b>Claim ${totalStr} dUSDC to your wallet</b>\n\n` +
+    `🔑 <b>Enter your password to sign</b>\n\n` +
+      `Claim <code>${totalStr} dUSDC</code> to your wallet.\n` +
       (pending.length > 0
-        ? `This redeems ${pending.length} settled position${pending.length === 1 ? "" : "s"} and moves your Trading Account balance to your wallet.\n\n`
-        : `This moves your Trading Account balance to your wallet.\n\n`) +
-      `Reply with your wallet password to sign.\n` +
-      `⚠️ <i>Your password message will be instantly deleted from chat history for your security.</i>`,
+        ? `Redeems ${pending.length} settled position${pending.length === 1 ? "" : "s"} and moves your trading account balance to your wallet.\n\n`
+        : `Moves your trading account balance to your wallet.\n\n`) +
+      `<i>Your password message is deleted right after you send it.</i>`,
     { parse_mode: "HTML" }
   );
 
@@ -583,7 +573,7 @@ export async function claimConversation(
     try {
       await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
     } catch (e) {}
-    await passCtx.reply("❌ Claim cancelled.");
+    await passCtx.reply("Claim cancelled.");
     return;
   }
 
@@ -592,7 +582,7 @@ export async function claimConversation(
   } catch (e) {}
 
   const loadingMsg = await passCtx.reply(
-    `⏳ <b>Claiming ${totalStr} dUSDC to your wallet...</b>`,
+    `⏳ <i>Unlocking your wallet and claiming ${totalStr} dUSDC…</i>`,
     { parse_mode: "HTML" }
   );
 
@@ -641,16 +631,16 @@ export async function claimConversation(
       await passCtx.api.editMessageText(
         passCtx.chat.id,
         loadingMsg.message_id,
-        `✅ <b>Claimed Successfully!</b>\n\n` +
-          `💰 Moved <code>${totalStr} dUSDC</code> to your wallet.\n\n` +
-          `🔗 <a href="${getExplorerTxLink(result.digest)}">View on SuiScan Explorer</a>`,
+        `✅ <b>Claimed</b>\n\n` +
+          `Moved <code>${totalStr} dUSDC</code> to your wallet.\n` +
+          `Tx <a href="${getExplorerTxLink(result.digest)}">${result.digest.slice(0, 8)}…${result.digest.slice(-4)}</a>`,
         { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
       );
     } else {
       await passCtx.api.editMessageText(
         passCtx.chat.id,
         loadingMsg.message_id,
-        `❌ <b>Claim Failed</b>\n\n<code>${result.error || "Execution failed"}</code>`,
+        `❌ <b>Claim failed</b>\n\n<code>${result.error || "Unknown error"}</code>`,
         { parse_mode: "HTML" }
       );
     }
@@ -659,7 +649,7 @@ export async function claimConversation(
     await passCtx.api.editMessageText(
       passCtx.chat.id,
       loadingMsg.message_id,
-      `❌ <b>Claim Error</b>\n\n<code>${error instanceof Error ? error.message : String(error)}</code>`,
+      `❌ <b>Claim failed</b>\n\n<code>${error instanceof Error ? error.message : String(error)}</code>`,
       { parse_mode: "HTML" }
     );
   }
@@ -669,7 +659,7 @@ export async function claimCommand(ctx: Context) {
   if (!ctx.from) return;
   if (!getUserManagerId(ctx.from.id.toString())) {
     return ctx.reply(
-      "👛 You don't have a trading account yet. Place a trade with /up or /down first."
+      "No trading account yet — place a trade with /up or /down first."
     );
   }
   return ctx.conversation.enter("claimConversation");
@@ -691,11 +681,10 @@ export async function walletCommand(ctx: Context) {
 
     if (!address) {
       return ctx.reply(
-        `👛 <b>Sui Wallet</b>\n\n` +
-          `You do not have a wallet yet.\n\n` +
-          `Create one with:\n` +
-          `<code>/wallet create your-password</code>\n\n` +
-          `Use at least 8 characters. Keep this password safe — it is needed to sign transactions.`
+        `👛 <b>Wallet</b>\n\n` +
+          `You don't have a wallet yet — only you hold the keys once you make one.\n\n` +
+          `Create one with <code>/wallet create your-password</code>\n\n` +
+          `Use at least 8 characters and keep it safe — it signs every transaction and can't be recovered.`
       );
     }
 
@@ -723,8 +712,8 @@ export async function walletCommand(ctx: Context) {
   }
 
   return ctx.reply(
-    `❌ Unknown wallet command.\n\n` +
-      `Available commands:\n` +
+    `That isn't a wallet command.\n\n` +
+      `Try:\n` +
       `/wallet create &lt;password&gt;\n` +
       `/wallet address\n` +
       `/wallet balance\n` +
@@ -740,8 +729,8 @@ async function createWalletCommand(ctx: Context, args: string[]) {
 
   if (!password) {
     return ctx.reply(
-      `❌ Usage: <code>/wallet create your-password</code>\n\n` +
-        `Use at least 8 characters. Do not reuse an important password.`
+      `Usage: <code>/wallet create your-password</code>\n\n` +
+        `Use at least 8 characters. Don't reuse an important password.`
     );
   }
 
@@ -754,17 +743,17 @@ async function createWalletCommand(ctx: Context, args: string[]) {
         ? "for gas"
         : "for gas (grab some from the public Sui testnet faucet)";
     return ctx.reply(
-      `✅ <b>Wallet Created</b>\n\n` +
-        `📍 <b>Your Deposit Address:</b>\n<code>${wallet.address}</code>\n\n` +
+      `✅ <b>Wallet created</b> — only you hold the keys.\n\n` +
+        `<b>Deposit address</b>\n<code>${wallet.address}</code>\n\n` +
         `To start trading, fund this address on Sui <b>${net}</b>:\n` +
-        `• <b>SUI</b> — ${gasHint}\n` +
-        `• <b>dUSDC</b> — your trading collateral\n\n` +
+        `• SUI — ${gasHint}\n` +
+        `• dUSDC — your trading collateral\n\n` +
         `Then check it with /balance.\n\n` +
-        `🔑 Keep your password safe — it signs every transaction and <b>cannot be recovered</b>.`
+        `Keep your password safe — it signs every transaction and <b>can't be recovered</b>.`
     );
   } catch (error) {
     return ctx.reply(
-      `❌ ${error instanceof Error ? error.message : "Failed to create wallet"}`
+      `❌ <b>Couldn't create your wallet</b>\n\n<code>${error instanceof Error ? error.message : "Failed to create wallet"}</code>`
     );
   }
 }
@@ -775,11 +764,11 @@ async function walletAddressCommand(ctx: Context) {
   const wallet = getUserWallet(ctx.from.id.toString());
 
   if (!wallet) {
-    return ctx.reply("❌ No wallet found. Create one with /wallet create <password>");
+    return ctx.reply("No wallet yet. Create one with <code>/wallet create your-password</code>.");
   }
 
   return ctx.reply(
-    `👛 <b>Your Deposit Address</b>\n\n` +
+    `👛 <b>Deposit address</b>\n\n` +
       `<code>${wallet.sui_address}</code>\n\n` +
       `Send SUI for gas and dUSDC for trading to this address.`
   );
@@ -792,7 +781,7 @@ async function walletBalanceCommand(ctx: Context) {
   const wallet = getUserWallet(telegramId);
 
   if (!wallet) {
-    return ctx.reply("❌ No wallet found. Create one with /wallet create <password>");
+    return ctx.reply("No wallet yet. Create one with <code>/wallet create your-password</code>.");
   }
 
   try {
@@ -810,7 +799,7 @@ async function walletBalanceCommand(ctx: Context) {
 
     const warning =
       suiResult.status === "rejected" || dusdcResult.status === "rejected"
-        ? `\n\n⚠️ One or more balances could not be fetched from Sui RPC.`
+        ? `\n\n⚠️ Some balances couldn't be fetched from Sui RPC.`
         : "";
 
     if (suiResult.status === "rejected" || dusdcResult.status === "rejected") {
@@ -824,14 +813,14 @@ async function walletBalanceCommand(ctx: Context) {
     }
 
     return ctx.reply(
-      `💰 <b>Onchain Balance</b>\n\n` +
-        `Address:\n<code>${wallet.sui_address}</code>\n\n` +
-        `SUI: ${suiBalance}\n` +
-        `dUSDC: ${dusdcBalance}${warning}`
+      `💰 <b>Balance</b>\n\n` +
+        `Address <code>${wallet.sui_address}</code>\n\n` +
+        `• Gas <code>${suiBalance}</code> SUI\n` +
+        `• Collateral <code>${dusdcBalance}</code> dUSDC${warning}`
     );
   } catch (error) {
     ctx.logger.error({ error }, "Failed to fetch wallet balance");
-    return ctx.reply("❌ Failed to fetch onchain balance. Please try again later.");
+    return ctx.reply("Couldn't fetch your on-chain balance. Try again in a moment.");
   }
 }
 
@@ -841,7 +830,7 @@ async function walletUnlockCommand(ctx: Context, args: string[]) {
   const password = args.join(" ");
 
   if (!password) {
-    return ctx.reply("❌ Usage: <code>/wallet unlock your-password</code>");
+    return ctx.reply("Usage: <code>/wallet unlock your-password</code>");
   }
 
   try {
@@ -849,12 +838,12 @@ async function walletUnlockCommand(ctx: Context, args: string[]) {
     const address = keypair.getPublicKey().toSuiAddress();
 
     return ctx.reply(
-      `✅ Wallet unlocked successfully.\n\n` +
-        `Signer address:\n<code>${address}</code>`
+      `✅ <b>Wallet unlocked</b>\n\n` +
+        `Signer <code>${address}</code>`
     );
   } catch (error) {
     return ctx.reply(
-      `❌ ${error instanceof Error ? error.message : "Failed to unlock wallet"}`
+      `❌ <b>Couldn't unlock your wallet</b>\n\n<code>${error instanceof Error ? error.message : "Failed to unlock wallet"}</code>`
     );
   }
 }
