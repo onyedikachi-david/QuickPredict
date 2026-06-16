@@ -42,7 +42,12 @@ async function fetchJson<T>(path: string): Promise<T> {
       throw new Error(`Predict server returned invalid JSON for ${path}: ${body.slice(0, 300)}`);
     }
   } catch (error) {
-    logger.error({ error, url, timeoutMs: REQUEST_TIMEOUT_MS }, "Predict server request failed");
+    // Stringify: pino renders an Error under a custom key as "{}", which hid
+    // real causes (e.g. the server's 500 "missing mark quote results").
+    logger.warn(
+      { url, error: error instanceof Error ? error.message : String(error) },
+      "Predict server request failed"
+    );
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -110,7 +115,10 @@ export async function fetchManagerSummary(managerId: string): Promise<ManagerSum
   try {
     return await fetchJson<ManagerSummary | null>(`/managers/${managerId}/summary`);
   } catch (error) {
-    logger.warn({ error, managerId }, "Failed to fetch manager summary");
+    logger.warn(
+      { managerId, error: error instanceof Error ? error.message : String(error) },
+      "Failed to fetch manager summary"
+    );
     return null;
   }
 }
@@ -135,7 +143,10 @@ export async function fetchPositionsMinted(managerId: string): Promise<PositionE
   try {
     return (await fetchJson<PositionEvent[]>(`/positions/minted?manager_id=${managerId}`)) ?? [];
   } catch (error) {
-    logger.warn({ error, managerId }, "Failed to fetch minted positions");
+    logger.warn(
+      { managerId, error: error instanceof Error ? error.message : String(error) },
+      "Failed to fetch minted positions"
+    );
     return [];
   }
 }
@@ -144,7 +155,10 @@ export async function fetchPositionsRedeemed(managerId: string): Promise<Positio
   try {
     return (await fetchJson<PositionEvent[]>(`/positions/redeemed?manager_id=${managerId}`)) ?? [];
   } catch (error) {
-    logger.warn({ error, managerId }, "Failed to fetch redeemed positions");
+    logger.warn(
+      { managerId, error: error instanceof Error ? error.message : String(error) },
+      "Failed to fetch redeemed positions"
+    );
     return [];
   }
 }
@@ -168,7 +182,10 @@ export async function fetchManagerPositions(managerId: string): Promise<ManagerP
   try {
     return (await fetchJson<ManagerPosition[]>(`/managers/${managerId}/positions/summary`)) ?? [];
   } catch (error) {
-    logger.warn({ error, managerId }, "Failed to fetch manager positions");
+    logger.warn(
+      { managerId, error: error instanceof Error ? error.message : String(error) },
+      "Failed to fetch manager positions"
+    );
     return [];
   }
 }

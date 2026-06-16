@@ -1,0 +1,37 @@
+# Fly.io config — QuickPredict runs as a WORKER (no public HTTP): Telegram
+# long-polling + the settlement keeper. No [[services]] section on purpose.
+#
+# First-time setup (once, locally):
+#   fly launch --no-deploy --copy-config --name <your-app-name>
+#   fly volumes create data --size 1 --region <region>
+#   fly secrets set BOT_TOKEN=... TRADE_FEE_BPS=0
+#   fly tokens create deploy   → save as the FLY_API_TOKEN GitHub secret
+# After that, every push to main deploys via GitHub Actions.
+app = "quickpredict-bot" # change to your fly app name
+primary_region = "fra"
+
+# One machine only: Telegram allows a single poller per bot token, and the
+# SQLite file must have exactly one writer.
+[deploy]
+  strategy = "immediate"
+
+[env]
+  NETWORK = "testnet"
+  SUI_EXECUTE_TRANSPORT = "grpc"
+  DB_PATH = "/data/quick-predict.db"
+  BOT_MODE = "polling"
+
+[mounts]
+  source = "data"
+  destination = "/data"
+
+# Give bot.stop() time to finish the in-flight update on shutdown.
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[restart]]
+  policy = "always"

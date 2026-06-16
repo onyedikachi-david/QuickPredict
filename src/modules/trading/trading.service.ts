@@ -118,6 +118,16 @@ export function computeTradeFee(premiumBase: number): bigint {
   return BigInt(Math.floor((premiumBase * bps) / 10_000));
 }
 
+// Wrong-password detection: wallets.ts throws Error("Invalid wallet password") when
+// a decrypt fails. Surface a clear message instead of a cryptic crypto error.
+function isWrongPassword(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return msg.includes("Invalid wallet password") || msg.includes("No wallet found");
+}
+
+const WRONG_PASSWORD_MSG =
+  "🔑 <b>Wrong password</b>\n\nYour trade wasn't placed and nothing was charged. Run the command again.";
+
 function getExampleAsset(availableAssets: string[]): string {
   return availableAssets[0] || "ASSET";
 }
@@ -466,9 +476,6 @@ export async function confirmTradeCallback(ctx: Context) {
 
   await ctx.answerCallbackQuery({ text: "Awaiting password..." });
 
-  // Store tradeKey in session
-  ctx.session.pendingTradeKey = tradeKey;
-
   // Edit original message to show password input state
   await ctx.editMessageText(
     `<b>Confirm trade</b>\n\n` +
@@ -477,7 +484,13 @@ export async function confirmTradeCallback(ctx: Context) {
       `🔑 <i>Enter your password below to sign.</i>`
   );
 
-  await ctx.conversation.enter("signTransactionConversation");
+  // Pass the trade key + label in via enter() args. Conversations v2 replays the
+  // builder, so data must NOT be smuggled through ctx.session (it isn't available
+  // on the conversation's context — see signTransactionConversation).
+  await ctx.conversation.enter("signTransactionConversation", {
+    tradeKey,
+    label: formatTradeLabel(trade),
+  });
 }
 
 export async function cancelTradeCallback(ctx: Context) {
@@ -547,9 +560,6 @@ export async function confirmCopyCallback(ctx: Context) {
 
   await ctx.answerCallbackQuery({ text: "Awaiting password..." });
 
-  // Store sourcePositionId in session
-  ctx.session.pendingCopyPositionId = sourcePositionId;
-
   const tradeLabel = formatPositionLabel(sourcePosition);
 
   // Edit original message to show password input state
@@ -560,7 +570,10 @@ export async function confirmCopyCallback(ctx: Context) {
       `🔑 <i>Enter your password below to sign.</i>`
   );
 
-  await ctx.conversation.enter("signTransactionConversation");
+  await ctx.conversation.enter("signTransactionConversation", {
+    copyPositionId: sourcePositionId,
+    label: tradeLabel,
+  });
 }
 
 export async function skipCopyCallback(ctx: Context) {
@@ -579,73 +592,51 @@ export async function skipCopyCallback(ctx: Context) {
   return ctx.editMessageText("Skipped copy trade.");
 }
 
-export async function signTransactionConversation(conversation: MyConversation, ctx: Context) {
-  const pendingTradeKey = ctx.session.pendingTradeKey;
-  const pendingCopyPositionId = ctx.session.pendingCopyPositionId;
+type SignTxArgs = { tradeKey?: string; copyPositionId?: string; label: string };
 
-  if (!pendingTradeKey && !pendingCopyPositionId) {
+export async function signTransactionConversation(
+  conversation: MyConversation,
+  ctx: Context,
+  args: SignTxArgs
+) {
+  // Data arrives via enter() args, never ctx.session: conversations v2 replays this
+  // builder from the top on every update, and the outer session is not on the
+  // conversation's context (read it via conversation.external if ever needed).
+  if (!args || (!args.tradeKey && !args.copyPositionId)) {
     await ctx.reply("Something went wrong — no pending trade found. Try again.");
     return;
   }
 
-  // Ask for password using ForceReply so that Telegram auto-focuses the keyboard
-  let promptMsg: string;
-  if (pendingTradeKey) {
-    const trade = pendingTrades.get(pendingTradeKey);
-    if (!trade) {
-      await ctx.reply("Trade expired — please try again.");
-      return;
-    }
-    promptMsg = `🔑 <b>Enter your password to sign</b>\n\n<i>For ${formatTradeLabel(trade)}</i>`;
-  } else {
-    const sourcePosition = getPositionById(pendingCopyPositionId!);
-    if (!sourcePosition) {
-      await ctx.reply("That trade is no longer available to copy.");
-      return;
-    }
-    promptMsg = `🔑 <b>Enter your password to sign</b>\n\n<i>Copying ${formatPositionLabel(sourcePosition)}</i>`;
-  }
+  // Ask for the password via ForceReply so Telegram auto-focuses the keyboard.
+  await ctx.reply(
+    `🔑 <b>Enter your password to sign</b>\n\n<i>${args.tradeKey ? "For" : "Copying"} ${args.label}</i>`,
+    { reply_markup: { force_reply: true, selective: true } }
+  );
 
-  await ctx.reply(promptMsg, {
-    reply_markup: {
-      force_reply: true,
-      selective: true,
-    },
-  });
-
-  // Wait for user reply
+  // Capture the user's next text message (the password).
   const passwordCtx = await conversation.waitFor("message:text");
   const password = passwordCtx.message.text.trim();
 
-  // Instant purge of password
-  try {
-    await passwordCtx.api.deleteMessage(passwordCtx.chat.id, passwordCtx.message.message_id);
-  } catch (err) {
-    ctx.logger.warn(`Failed to delete password message: ${err}`);
-  }
-
-  const cleanSession = () => {
-    ctx.session.pendingTradeKey = undefined;
-    ctx.session.pendingCopyPositionId = undefined;
-  };
+  // Purge the password message immediately (ctx.api call — the plugin handles it).
+  await passwordCtx.api
+    .deleteMessage(passwordCtx.chat.id, passwordCtx.message.message_id)
+    .catch((err) => logger.warn(`Failed to delete password message: ${err}`));
 
   if (password.toLowerCase() === "cancel" || password === "/cancel") {
-    cleanSession();
     await passwordCtx.reply("Signing cancelled.");
     return;
   }
   if (password.startsWith("/")) {
-    cleanSession();
     await passwordCtx.reply("Signing cancelled. Run the command again when ready.");
     return;
   }
 
-  cleanSession();
-
-  if (pendingTradeKey) {
-    await executeMintTransaction(passwordCtx, pendingTradeKey, password);
+  // Past the wait point: this runs exactly once (the plugin only replays up TO the
+  // last wait), so the network + signing work here is never re-executed.
+  if (args.tradeKey) {
+    await executeMintTransaction(passwordCtx, args.tradeKey, password);
   } else {
-    await executeCopyMintTransaction(passwordCtx, pendingCopyPositionId!, password);
+    await executeCopyMintTransaction(passwordCtx, args.copyPositionId!, password);
   }
 }
 
@@ -668,7 +659,9 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
     if (!managerResult.ok) {
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
       return ctx.reply(
-        `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`
+        isWrongPassword(managerResult.error)
+          ? WRONG_PASSWORD_MSG
+          : `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`
       );
     }
     if (managerResult.created) {
@@ -786,17 +779,18 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
           { reply_markup: followerKeyboard, parse_mode: "HTML" }
         );
       } catch (error) {
-        ctx.logger.warn(`Failed to notify follower ${follow.follower_id}: ${error}`);
+        logger.warn(`Failed to notify follower ${follow.follower_id}: ${error}`);
       }
     }
 
   } catch (error) {
-    ctx.logger.error({ error }, "Error executing mint transaction");
+    logger.error({ error }, "Error executing mint transaction");
     if (ctx.chat) {
       try {
         await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
       } catch (e) {}
     }
+    if (isWrongPassword(error)) return ctx.reply(WRONG_PASSWORD_MSG);
     return ctx.reply(`❌ <b>Something went wrong</b>\n\n<code>${error instanceof Error ? error.message : String(error)}</code>`);
   }
 }
@@ -821,7 +815,9 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
     if (!managerResult.ok) {
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
       return ctx.reply(
-        `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`
+        isWrongPassword(managerResult.error)
+          ? WRONG_PASSWORD_MSG
+          : `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`
       );
     }
     if (managerResult.created) {
@@ -910,12 +906,13 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
     await ctx.reply(successMsg, { reply_markup: keyboard, link_preview_options: { is_disabled: true } });
 
   } catch (error) {
-    ctx.logger.error({ error }, "Error executing copy mint transaction");
+    logger.error({ error }, "Error executing copy mint transaction");
     if (ctx.chat) {
       try {
         await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
       } catch (e) {}
     }
+    if (isWrongPassword(error)) return ctx.reply(WRONG_PASSWORD_MSG);
     return ctx.reply(`❌ <b>Something went wrong</b>\n\n<code>${error instanceof Error ? error.message : String(error)}</code>`);
   }
 }
@@ -1008,6 +1005,10 @@ export async function balanceCommand(ctx: Context) {
       message += `• At risk (open) <code>${formatDusdc(summary.open_exposure)} dUSDC</code>\n`;
       message += `• Realized PnL <code>${signed(summary.realized_pnl)} dUSDC</code>\n`;
       message += `• Unrealized PnL <code>${signed(summary.unrealized_pnl)} dUSDC</code>\n`;
+    } else {
+      // Indexer hiccup (e.g. its 500 "missing mark quote results" on some open
+      // positions) — say so instead of silently dropping the section.
+      message += `\n<b>Trading account</b>\n<i>Details unavailable right now — try again shortly.</i>\n`;
     }
   }
 

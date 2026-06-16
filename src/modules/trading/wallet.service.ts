@@ -173,7 +173,8 @@ export async function unlockWalletConversation(
   if (!ctx.from) return;
 
   const telegramId = ctx.from.id.toString();
-  const address = getUserWalletAddress(telegramId);
+  // DB read before the wait → wrap in external so replays reuse the cached value.
+  const address = await conversation.external(() => getUserWalletAddress(telegramId));
   if (!address) {
     await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
     return;
@@ -241,7 +242,8 @@ export async function withdrawConversation(
 ) {
   if (!ctx.from) return;
   const telegramId = ctx.from.id.toString();
-  const address = getUserWalletAddress(telegramId);
+  // DB read before the wait → wrap in external so replays reuse the cached value.
+  const address = await conversation.external(() => getUserWalletAddress(telegramId));
   if (!address) {
     await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
     return;
@@ -311,16 +313,19 @@ export async function withdrawConversation(
     await ctx.api.deleteMessage(ctx.chat!.id, addrPrompt.message_id);
   } catch (e) {}
 
-  // Fetch available balance
-  let rawBalance = 0n;
-  let formattedBalance = "0";
-  if (token === "SUI") {
-    rawBalance = await getCoinBalance(address, "0x2::sui::SUI");
-    formattedBalance = formatCoinAmount(rawBalance, 9);
-  } else {
-    rawBalance = await getDusdcBalance(address);
-    formattedBalance = formatCoinAmount(rawBalance, getDusdcDecimals());
-  }
+  // Fetch available balance — a network read BETWEEN waits, so it must run inside
+  // conversation.external: otherwise it re-fires on every replay and the balance
+  // used to validate the amount could drift. bigint isn't JSON-serializable, so
+  // persist it as a string via beforeStore/afterLoad.
+  const rawBalance = await conversation.external({
+    task: () =>
+      token === "SUI"
+        ? getCoinBalance(address, "0x2::sui::SUI")
+        : getDusdcBalance(address),
+    beforeStore: (v: bigint) => v.toString(),
+    afterLoad: (s: string) => BigInt(s),
+  });
+  const formattedBalance = formatCoinAmount(rawBalance, token === "SUI" ? 9 : getDusdcDecimals());
 
   // 3. Ask for amount
   const amountPrompt = await ctx.reply(
@@ -518,25 +523,29 @@ export async function claimConversation(
   if (!ctx.from) return;
   const telegramId = ctx.from.id.toString();
 
-  const managerId = getUserManagerId(telegramId);
-  if (!managerId) {
-    await ctx.reply(
-      "No trading account yet — place a trade with /up or /down first."
-    );
+  // Gather claim state up front in ONE external block: it mixes a DB read with a
+  // NETWORK call (manager summary) that would otherwise re-fire on every replay,
+  // possibly with a different balance. Caching it keeps the amount shown to the
+  // user consistent with what actually gets redeemed.
+  const claimState = await conversation.external(async () => {
+    const mId = getUserManagerId(telegramId);
+    if (!mId) return null;
+    // Settled winnings the keeper couldn't auto-redeem (ranges, or a failed binary
+    // auto-redeem) still need an owner-signed redeem; the rest already sits in the
+    // manager balance.
+    const pendingPositions = getClaimableSettledPositions(telegramId);
+    const summary = await fetchManagerSummary(mId);
+    const currentBalance = summary?.trading_balance ?? 0;
+    // Each settled winner pays its notional ($1 x qty) on redeem.
+    const payout = pendingPositions.reduce((sum, p) => sum + p.notional_dusdc, 0);
+    return { managerId: mId, pending: pendingPositions, totalBase: currentBalance + payout };
+  });
+
+  if (!claimState) {
+    await ctx.reply("No trading account yet — place a trade with /up or /down first.");
     return;
   }
-
-  // Settled winnings the keeper could not auto-redeem (ranges, plus any binary
-  // whose auto-redeem failed) still need an owner-signed on-chain redeem.
-  const pending = getClaimableSettledPositions(telegramId);
-
-  // Balance already sitting in the manager (auto-redeemed binaries, dust).
-  const summary = await fetchManagerSummary(managerId);
-  const currentBalance = summary?.trading_balance ?? 0;
-
-  // Each settled winner pays exactly its notional ($1 x qty) when redeemed.
-  const pendingPayout = pending.reduce((sum, p) => sum + p.notional_dusdc, 0);
-  const totalBase = currentBalance + pendingPayout;
+  const { managerId, pending, totalBase } = claimState;
 
   if (totalBase <= 0) {
     await ctx.reply(

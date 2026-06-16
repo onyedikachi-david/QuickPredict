@@ -1,0 +1,12 @@
+# Continuous SQLite replication to any S3-compatible bucket (S3 / Backblaze B2 /
+# Cloudflare R2). Credentials come from LITESTREAM_ACCESS_KEY_ID and
+# LITESTREAM_SECRET_ACCESS_KEY in the environment (.env on the VPS).
+#
+# Restore drill (run on a fresh host before you trust it with mainnet):
+#   litestream restore -config /etc/litestream.yml -o /data/quick-predict.db /data/quick-predict.db
+dbs:
+  - path: /data/quick-predict.db
+    replica:
+      # e.g. s3://quickpredict-backups/db  (set endpoint for B2/R2)
+      url: ${LITESTREAM_REPLICA_URL}
+      # endpoint: https://<accountid>.r2.cloudflarestorage.com

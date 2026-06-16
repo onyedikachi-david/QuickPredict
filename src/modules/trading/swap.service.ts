@@ -31,7 +31,8 @@ export async function swapConversation(
 ) {
   if (!ctx.from) return;
   const telegramId = ctx.from.id.toString();
-  const address = getUserWalletAddress(telegramId);
+  // DB read before the wait → wrap in external so replays reuse the cached value.
+  const address = await conversation.external(() => getUserWalletAddress(telegramId));
   if (!address) {
     await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
     return;
@@ -79,15 +80,18 @@ export async function swapConversation(
     );
   } catch (e) {}
 
-  // Fetch balances
-  const rawSuiBalance = await getCoinBalance(address, "0x2::sui::SUI");
+  // Fetch balances — network reads BETWEEN waits, so they must run inside
+  // conversation.external (else they re-fire on every replay). bigints aren't
+  // JSON-serializable, so pass them out as strings.
+  const { rawSui, rawDusdc } = await conversation.external(async () => {
+    const s = await getCoinBalance(address, "0x2::sui::SUI");
+    const d = await getDusdcBalance(address);
+    return { rawSui: s.toString(), rawDusdc: d.toString() };
+  });
+  const rawSuiBalance = BigInt(rawSui);
+  const rawDusdcBalance = BigInt(rawDusdc);
   const formattedSuiBalance = formatCoinAmount(rawSuiBalance, 9);
-
-  const rawDusdcBalance = await getDusdcBalance(address);
-  const formattedDusdcBalance = formatCoinAmount(
-    rawDusdcBalance,
-    getDusdcDecimals(),
-  );
+  const formattedDusdcBalance = formatCoinAmount(rawDusdcBalance, getDusdcDecimals());
 
   const availableBalanceStr = isSuiToDusdc
     ? formattedSuiBalance
@@ -104,8 +108,6 @@ export async function swapConversation(
 
   let amountStr = "";
   let amountBase = 0n;
-  let simulatedOut = 0;
-  let minOutBase = 0n;
 
   while (true) {
     const amountCtx = await conversation.waitFor("message:text");
@@ -172,44 +174,31 @@ export async function swapConversation(
   const isMainnet = network === "mainnet";
   const poolKey = cfg.deepbook.suiUsdcPoolKey;
 
-  try {
-    const suiClient = getRpcClient();
-    const dbClient = new DeepBookClient({
-      client: suiClient,
-      address,
-      network,
-    });
-
-    if (isSuiToDusdc) {
-      const estimate = await dbClient.getQuoteQuantityOut(
-        poolKey,
-        parseFloat(amountStr),
-      );
-      simulatedOut = estimate.quoteOut;
-      // Convert standard units back to base units for slippage protection (1% slippage)
-      const quoteDecimals = getDusdcDecimals();
-      minOutBase = parseCoinAmount(
-        (simulatedOut * 0.99).toFixed(quoteDecimals),
-        quoteDecimals,
-      );
-    } else {
-      const estimate = await dbClient.getBaseQuantityOut(
-        poolKey,
-        parseFloat(amountStr),
-      );
-      simulatedOut = estimate.baseOut;
-      // Convert SUI units back to base units for slippage protection (1% slippage)
-      minOutBase = parseCoinAmount((simulatedOut * 0.99).toFixed(9), 9);
+  // The DeepBook quote is a NETWORK call between waits — wrap it so it doesn't
+  // re-fire on every replay (which could shift the slippage floor). minOutBase is
+  // a bigint, so pass it out as a string.
+  const { simulatedOut, minOutBaseStr } = await conversation.external(async () => {
+    try {
+      const dbClient = new DeepBookClient({ client: getRpcClient(), address, network });
+      if (isSuiToDusdc) {
+        const estimate = await dbClient.getQuoteQuantityOut(poolKey, parseFloat(amountStr));
+        const qd = getDusdcDecimals();
+        return {
+          simulatedOut: estimate.quoteOut,
+          minOutBaseStr: parseCoinAmount((estimate.quoteOut * 0.99).toFixed(qd), qd).toString(),
+        };
+      }
+      const estimate = await dbClient.getBaseQuantityOut(poolKey, parseFloat(amountStr));
+      return {
+        simulatedOut: estimate.baseOut,
+        minOutBaseStr: parseCoinAmount((estimate.baseOut * 0.99).toFixed(9), 9).toString(),
+      };
+    } catch (err) {
+      logger.warn({ err, amountStr, fromToken }, "Failed to simulate DeepBook swap output");
+      return { simulatedOut: 0, minOutBaseStr: "0" };
     }
-  } catch (err) {
-    logger.warn(
-      { err, amountStr, fromToken },
-      "Failed to simulate DeepBook swap output",
-    );
-    // Fallback to 0 min out if simulation fails (e.g. due to pool initialization or indexer issues)
-    simulatedOut = 0;
-    minOutBase = 0n;
-  }
+  });
+  const minOutBase = BigInt(minOutBaseStr);
 
   try {
     await ctx.api.deleteMessage(ctx.chat!.id, simMsg.message_id);

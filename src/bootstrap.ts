@@ -72,8 +72,20 @@ export const initializeBot = () : Bot<Context> => {
   protectedBot.use(sessionMiddleware());
   protectedBot.use(i18n);
 
-  // Register Conversation Wizards (Conversations must sit after Session middleware)
-  protectedBot.use(conversations());
+  // Register Conversation Wizards (Conversations must sit after Session middleware).
+  // v2 conversations use their own per-context Api, so the global parse_mode:HTML
+  // transformer above (installed on bot.api) does NOT reach replies sent inside a
+  // conversation — password prompts and mint/withdraw/swap/claim results would
+  // render raw HTML tags. Re-install the same transformer on each conversation
+  // context via the plugins option (the documented way to use API transformers
+  // inside conversations).
+  const htmlParseMode = async (ctx: Context, next: () => Promise<void>) => {
+    ctx.api.config.use((prev, method, payload, signal) =>
+      prev(method, { parse_mode: "HTML", ...payload }, signal)
+    );
+    await next();
+  };
+  protectedBot.use(conversations({ plugins: [htmlParseMode] }));
   protectedBot.use(createConversation(signTransactionConversation));
   protectedBot.use(createConversation(unlockWalletConversation));
   protectedBot.use(createConversation(withdrawConversation));

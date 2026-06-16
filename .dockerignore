@@ -1,4 +1,22 @@
-node_modules/
-*.log
-.env
+node_modules
 .git
+.github
+.env
+.env.*
+!.env.example
+*.log
+
+# Never bake a local database (holds encrypted user wallet keys) into an image.
+*.db
+*.db-shm
+*.db-wal
+data/
+
+scratch/
+docs/
+*.md
+.vscode
+.claude
+fly.toml
+docker-compose.yml
+litestream.yml

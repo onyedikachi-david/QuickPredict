@@ -93,7 +93,11 @@ export interface UserWallet {
 
 let db: Database | null = null;
 
-export function initializeDatabase(dbPath: string = "./quick-predict.db"): Database {
+export function initializeDatabase(
+  // DB_PATH lets deployments point the SQLite file at a mounted volume
+  // (e.g. /data/quick-predict.db); default keeps local dev unchanged.
+  dbPath: string = process.env.DB_PATH || "./quick-predict.db"
+): Database {
   if (db) return db;
 
   db = new Database(dbPath, { create: true, readwrite: true });

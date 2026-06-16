@@ -13,7 +13,8 @@ export const config : Config = {
   botToken: process.env.BOT_TOKEN,
   botMode: process.env.BOT_MODE || "polling",
   logLevel: process.env.LOG_LEVEL || "info",
-  debug: JSON.parse(`${process.env.DEBUG}`) || false,
+  // Not JSON.parse: an unset DEBUG would parse "undefined" and crash at boot.
+  debug: process.env.DEBUG === "true",
   webhookURI: process.env.WEBHOOK_URL,
   webhookSecret: process.env.WEBHOOK_SECRET_TOKEN,
   port: Number(process.env.PORT) || 3000,

@@ -14,8 +14,6 @@ import type { Config } from "./config";
 export type MyConversation = Conversation<Context, Context>;
 
 export interface SessionData {
-  pendingTradeKey?: string;
-  pendingCopyPositionId?: string;
   tradeBuilder?: {
     isUp?: boolean;
     isRange?: boolean;
