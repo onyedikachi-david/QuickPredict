@@ -1,38 +1,31 @@
-# ⚡ Quick-Predict: Telegram-Native Trading Interface for DeepBook Predict
+# QuickPredict
 
-Quick-Predict is a high-performance, non-custodial Telegram bot that serves as a mobile-first trading interface for **DeepBook Predict** — the institutional-grade on-chain binary options protocol on Sui.
+Telegram-native trading interface for DeepBook Predict on Sui.  
+One command to trade. Non-custodial by design.
 
-By utilizing a secure, locally-encrypted wallet architecture (**Model B: Dynamic ForceReply Prompts**), Quick-Predict allows users to discover markets, calculate option metrics (implied probability, premium, net payouts), and execute real-time on-chain trades directly within Telegram.
+## What Is QuickPredict?
 
----
+QuickPredict is a high-performance Telegram bot that serves as a mobile-first trading interface for **DeepBook Predict** — the institutional-grade on-chain binary options protocol on Sui.
 
-## 🏗️ Core Architecture (Model B)
+Users can discover markets, calculate option metrics (implied probability, premium, net payouts), and execute real-time on-chain trades directly within Telegram — all while maintaining full non-custodial ownership of their funds through a secure, locally-encrypted wallet architecture.
 
-Quick-Predict is built from the ground up to solve the UX and security challenges of mobile prediction markets:
+**Problem**: DeepBook Predict is technically superior to competing prediction markets — sub-400ms settlement, institutional SVI pricing, composability with Margin and Spot. Yet it has zero consumer-facing distribution. The friction between "I think BTC is going up" and "I have a live on-chain position" requires a Sui wallet, testnet tokens, and browser. This gates out most potential users.
 
-1. **Non-Custodial Local Wallets (Model B):**
-   * Users initialize their own unique Sui keypair using `/wallet create <password>`.
-   * Keypairs are locally encrypted using **AES-256-GCM** with a key derived via **PBKDF2** (310,000 iterations + unique random salt) and stored securely in SQLite.
-   * During trade execution, the bot issues a Telegram `ForceReply` prompt requesting the password. The password message is intercepted, processed transiently in volatile RAM, and **instantly deleted** from the chat history using the Telegram API to prevent leakage.
-2. **Onboarding Faucet Bridge:**
-   * New wallets are automatically credited with **0.1 SUI** (for gas) and **1,000 dUSDC** (for option collateral) upon `/wallet create`, funded from the `SPONSOR_PRIVATE_KEY` testnet treasury.
-   * This facilitates frictionless, zero-setup testing and evaluation.
-3. **On-Chain & Off-Chain Ledger Reconciliation:**
-   * `/balance` and `/wallet balance` query the Sui RPC directly. Off-chain SQLite cached balances are automatically synchronized to serve as live mirrors of on-chain state.
-4. **WebSocket Event Streaming Keeper:**
-   * Migrated from high-latency active polling to a persistent WebSocket subscription (`suiClient.subscribeEvent`) listening for `oracle::OracleSettled` logs from the Predict package.
-   * The keeper settlements execute `redeem_permissionless` instantly upon oracle updates, with active polling retained only as a resilient fallback.
-5. **Pre-Trade Risk Control Guard:**
-   * Active checks against the Predict registry and vault state (`/vault/summary` and `/state`) prevent users from submitting transactions that exceed available vault exposure limits.
-6. **DeepSeek AI Context Client:**
-   * Integrates the DeepSeek API (OpenAI-compatible) inside `src/ai/context.ts` to enrich the pre-trade preview card with a concise, 15-word market context analysis.
-   * Defaults to `deepseek-v4-flash` for low-latency responses; set `DEEPSEEK_MODEL=deepseek-v4-pro` to use the Pro model.
+**Solution**: QuickPredict closes both gaps — bringing prediction markets to Telegram where the audience already exists, while keeping funds non-custodial and trades on-chain.
 
----
+## Architecture
 
-## 🛠️ Project Structure
+QuickPredict is built around non-custodial security and real-time settlement:
 
-```text
+- **Non-Custodial Local Wallets (Model B)**: Users initialize their own Sui keypair using `/wallet create <password>`. Keypairs are locally encrypted using AES-256-GCM with a key derived via PBKDF2 (310,000 iterations + unique random salt), stored in SQLite. Password prompts use Telegram ForceReply and are deleted instantly after use.
+- **Onboarding Faucet Bridge**: New wallets are automatically credited with 0.1 SUI (gas) and 1,000 dUSDC (collateral) upon creation, funded from the testnet treasury — enabling frictionless zero-setup testing.
+- **WebSocket Event Streaming Keeper**: Subscribes to `oracle::OracleSettled` events from the Predict package and executes `redeem_permissionless` instantly upon oracle updates, with active polling as a resilient fallback.
+- **Pre-Trade Risk Control Guard**: Active checks against Predict registry and vault state prevent transactions that exceed available vault exposure limits.
+- **DeepSeek AI Context Client**: Integrates DeepSeek API to enrich trade preview cards with concise market context analysis.
+
+## Project Structure
+
+```
 src/
   ai/           DeepSeek AI context client integration
   common/       shared config, context, i18n, and error handling
@@ -42,70 +35,111 @@ src/
   middlewares/  session and logging middleware
   modules/      Telegram bot commands, callback handlers, and dialogs
   predict/      DeepBook Predict client APIs and risk queries
-  sui/          cryptography, PBKDF2/AES wallet routines, and Sui PTB transaction builders
+  sui/          cryptography, PBKDF2/AES wallet routines, and Sui PTB builders
   bootstrap.ts  bot and middleware registration
   index.ts      app startup entry point
 docs/
   prd.md        Product Requirements Document
 ```
 
----
+The app is a single long-running process (Telegram long-polling + 20s settlement keeper) with a local SQLite file holding encrypted wallet keys.
 
-## 🚀 Quick Start
+## Requirements
 
-### 1. Prerequisites
-Ensure you have [Bun](https://bun.sh) installed.
+- Bun >=1.0
+- Docker with Compose (for production deployment)
+- Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
 
-### 2. Installation
-Install project dependencies:
-```bash
-bun install
-```
+## Quick Start
 
-### 3. Environment Setup
-Configure your environment variables by copying `.env.example`:
 ```bash
 cp .env.example .env
-```
-
-Edit `.env` to supply the following variables:
-* `TELEGRAM_BOT_TOKEN`: Your Telegram Bot API token.
-* `SUI_RPC_URL`: Sui RPC node URL (defaults to testnet `https://fullnode.testnet.sui.io`).
-* `PREDICT_SERVER_URL`: The Predict API server URL (`https://predict-server.testnet.mystenlabs.com`).
-* `SPONSOR_PRIVATE_KEY`: The bot's faucet treasury private key (must contain SUI and dUSDC).
-* `DEEPSEEK_API_KEY`: DeepSeek API key for generating live market contexts.
-* `DEEPSEEK_MODEL`: *(optional)* DeepSeek model to use. Defaults to `deepseek-v4-flash`; set to `deepseek-v4-pro` for higher-quality responses.
-
-### 4. Database Setup & Migrations
-Initialize the Drizzle SQLite database and run the schema migrations:
-```bash
+bun install
 bunx drizzle-kit push
-```
-
-### 5. Running the Application
-Start the development server with live reload:
-```bash
 bun run dev
 ```
 
-Start the production build:
+The bot will start polling for Telegram messages. Default local URLs:
+
+- Bot: Running via long-polling (no public HTTP needed)
+
+Useful commands:
+
 ```bash
-bun run start
+bun run dev              # start with live reload
+bun run start            # production build
+bun run typecheck        # TypeScript type checking
+bun run db:generate      # generate Drizzle migrations
+bun run db:migrate       # run database migrations
 ```
 
----
+### Environment Variables
 
-## 🧪 Verification & Testing
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `BOT_TOKEN` | Telegram Bot API token | Yes |
+| `SUI_RPC_URL` | Sui RPC node URL (default: testnet) | No |
+| `PREDICT_SERVER_URL` | Predict API server URL | No |
+| `SPONSOR_PRIVATE_KEY` | Faucet treasury private key (testnet) | Yes |
+| `DEEPSEEK_API_KEY` | DeepSeek API key for market context | No |
+| `DEEPSEEK_MODEL` | DeepSeek model (default: `deepseek-v4-flash`) | No |
 
-### Cryptographic Routines
-Verify that key generation, PBKDF2 derivation, and AES-256-GCM encryption/decryption are correct:
+## Verification
+
 ```bash
-bun test src/sui/wallets.test.ts
+bun test src/sui/wallets.test.ts   # verify cryptographic routines
+bun run typecheck                   # TypeScript validation
 ```
 
-### Manual BOT Interactions
-1. Run `/wallet create mypassword` to create your secure wallet.
-2. Confirm you receive a successful address generation, and check `/wallet balance` to verify that the onboarding faucet has automatically credited your wallet with `0.1 SUI` and `1,000 dUSDC`.
-3. Browse active markets using `/markets`.
-4. Submit a trade (e.g. `/up BTC 85000 10 100`).
-5. Tap **[Confirm ✓]**, enter your password, and verify that the password message is immediately deleted and the transaction successfully settles on-chain.
+### Manual Bot Interactions
+
+1. `/wallet create mypassword` — create secure wallet, receive faucet credits
+2. `/wallet balance` — verify 0.1 SUI + 1,000 dUSDC credited
+3. `/markets` — browse active prediction markets
+4. `/up BTC 85000 10 100` — submit a trade
+5. Confirm → enter password → verify password deleted and transaction settles
+
+## Deployment
+
+QuickPredict is designed for a single instance with a persistent volume (one Telegram poller per token, one SQLite writer). Serverless platforms (Vercel/Workers/Lambda) do not fit this architecture.
+
+See [DEPLOY.md](./DEPLOY.md) for full deployment documentation.
+
+### Path A: Fly.io (Testnet/Demo)
+
+```bash
+fly launch --no-deploy --copy-config --name <your-app-name>
+fly volumes create data --size 1 --region fra
+fly secrets set BOT_TOKEN=...
+fly deploy --remote-only
+```
+
+### Path B: VPS with Docker Compose (Mainnet)
+
+```bash
+git clone <repo> && cd QuickPredict
+cp .env.example .env  # fill: BOT_TOKEN, LITESTREAM_* (bucket + creds)
+docker compose up -d --build
+```
+
+Backups use **Litestream** as a sidecar, streaming every SQLite change to S3/B2/R2.
+
+## CI/CD
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| `ci.yml` | every PR | typecheck + Docker image build |
+| `deploy.yml` | push to `main` | typecheck → push image to GHCR → deploy to Fly |
+
+## Production Checklist
+
+- [ ] `BOT_TOKEN` set as a secret (never in repo/image)
+- [ ] Volume mounted; `DB_PATH=/data/quick-predict.db`
+- [ ] Backups streaming (Litestream) and restore drill performed
+- [ ] Dedicated Sui RPC endpoint (`SUI_GRPC_URL`) — public nodes are rate-limited
+- [ ] `NETWORK=testnet` until DeepBook Predict ships mainnet IDs
+- [ ] Exactly one instance running (two pollers on one token = Telegram 409 errors)
+
+## License
+
+MIT
