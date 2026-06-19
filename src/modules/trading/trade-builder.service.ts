@@ -36,6 +36,7 @@ import { getOrCreateUser } from "../../db/users";
 import { getPositionCount, getUserTradeCount } from "../../db/positions";
 import { generateTradeAIContext } from "../../ai/context";
 import { logger } from "../../helpers/logger";
+import { replyRich } from "../../helpers/rich-message";
 
 // Helper to format model names
 function formatPricingModel(model: string, askBoundsApplied: boolean): string {
@@ -71,21 +72,21 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
       // Rate limit checks
       const openCount = getPositionCount(user.telegram_id, "open");
       if (openCount >= MAX_POSITIONS_PER_USER) {
-        await ctx.reply(`⚠️ You've hit the limit of ${MAX_POSITIONS_PER_USER} open positions.`);
+        await replyRich(ctx, `<h1>Position Limit Reached</h1><p>You have hit the limit of ${MAX_POSITIONS_PER_USER} open positions.</p>`);
         await ctx.menu.close();
         return;
       }
 
       const hourlyTradeCount = getUserTradeCount(user.telegram_id, Date.now() - 60 * 60 * 1000);
       if (hourlyTradeCount >= MAX_TRADES_PER_HOUR) {
-        await ctx.reply(`⚠️ You've hit the limit of ${MAX_TRADES_PER_HOUR} trades this hour.`);
+        await replyRich(ctx, `<h1>Trade Limit Reached</h1><p>You have hit the limit of ${MAX_TRADES_PER_HOUR} trades this hour.</p>`);
         await ctx.menu.close();
         return;
       }
 
       const oracle = await findNearestOracle(tb.asset, tb.minutes);
       if (!oracle) {
-        await ctx.reply(`No active market for ${tb.asset} right now.`);
+        await replyRich(ctx, `<h1>No Active Market</h1><p>No active market for ${tb.asset} right now.</p>`);
         await ctx.menu.close();
         return;
       }
@@ -93,7 +94,7 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
       const notionalDusdc = parseDusdc(amount);
       const riskCheck = await checkVaultExposure(notionalDusdc);
       if (!riskCheck.allowed) {
-        await ctx.reply(`⚠️ <b>Trade blocked</b>\n\n${riskCheck.reason}`);
+        await replyRich(ctx, `<h1>Trade Blocked</h1><p>${riskCheck.reason}</p>`);
         await ctx.menu.close();
         return;
       }
@@ -120,7 +121,7 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
 
         const feeBase = computeTradeFee(pricing.premium_dusdc);
         if (user.dusdc_balance < pricing.premium_dusdc + Number(feeBase)) {
-          await ctx.reply(`Not enough dUSDC — you need <code>${formatDusdc(pricing.premium_dusdc + Number(feeBase))} dUSDC</code>.`);
+          await replyRich(ctx, `<h1>Not Enough dUSDC</h1><p>You need <code>${formatDusdc(pricing.premium_dusdc + Number(feeBase))} dUSDC</code>.</p>`);
           await ctx.menu.close();
           return;
         }
@@ -156,15 +157,18 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
         });
 
         preview =
-          `<b>Review trade</b>\n\n` +
-          `↔ ${tb.asset} between <code>$${formatPrice(low)}</code> and <code>$${formatPrice(high)}</code>\n` +
-          `Expires in ${formatDuration(actualMin)} · spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}\n\n` +
-          `• You pay (premium): <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>\n` +
-          (feeBase > 0n ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n` : "") +
-          `• Max payout: <code>${formatDusdc(pricing.notional_dusdc)} dUSDC</code>\n` +
-          `• Net if you're right: <code>+${formatDusdc(pricing.net_if_correct)} dUSDC</code>\n` +
-          `• Market-implied chance: <code>${formatPercentage(pricing.implied_prob)}%</code>\n\n` +
-          `<i>${aiContext}</i>`;
+          `<h1>Review Trade</h1>` +
+          `<p>↔ ${tb.asset} between <code>$${formatPrice(low)}</code> and <code>$${formatPrice(high)}</code></p>` +
+          `<ul>` +
+          `<li>Expires in ${formatDuration(actualMin)}</li>` +
+          `<li>Spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}</li>` +
+          `<li>Premium <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code></li>` +
+          (feeBase > 0n ? `<li>Fee <code>${formatDusdc(Number(feeBase))} dUSDC</code></li>` : "") +
+          `<li>Max payout <code>${formatDusdc(pricing.notional_dusdc)} dUSDC</code></li>` +
+          `<li>Net if right <code>+${formatDusdc(pricing.net_if_correct)} dUSDC</code></li>` +
+          `<li>Market-implied chance <code>${formatPercentage(pricing.implied_prob)}%</code></li>` +
+          `</ul>` +
+          `<blockquote>${aiContext}</blockquote>`;
 
       } else {
         const strike = tb.strike!;
@@ -183,7 +187,7 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
 
         const feeBase = computeTradeFee(pricing.premium_dusdc);
         if (user.dusdc_balance < pricing.premium_dusdc + Number(feeBase)) {
-          await ctx.reply(`Not enough dUSDC — you need <code>${formatDusdc(pricing.premium_dusdc + Number(feeBase))} dUSDC</code>.`);
+          await replyRich(ctx, `<h1>Not Enough dUSDC</h1><p>You need <code>${formatDusdc(pricing.premium_dusdc + Number(feeBase))} dUSDC</code>.</p>`);
           await ctx.menu.close();
           return;
         }
@@ -219,15 +223,18 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
         const direction = isUp ? "above" : "below";
         const dirEmoji = isUp ? "📈" : "📉";
         preview =
-          `<b>Review trade</b>\n\n` +
-          `${dirEmoji} ${tb.asset} ${direction} <code>$${formatPrice(strike)}</code>\n` +
-          `Expires in ${formatDuration(actualMin)} · spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}\n\n` +
-          `• You pay (premium): <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>\n` +
-          (feeBase > 0n ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n` : "") +
-          `• Max payout: <code>${formatDusdc(pricing.notional_dusdc)} dUSDC</code>\n` +
-          `• Net if you're right: <code>+${formatDusdc(pricing.net_if_correct)} dUSDC</code>\n` +
-          `• Market-implied chance: <code>${formatPercentage(pricing.implied_prob)}%</code>\n\n` +
-          `<i>${aiContext}</i>`;
+          `<h1>Review Trade</h1>` +
+          `<p>${dirEmoji} ${tb.asset} ${direction} <code>$${formatPrice(strike)}</code></p>` +
+          `<ul>` +
+          `<li>Expires in ${formatDuration(actualMin)}</li>` +
+          `<li>Spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}</li>` +
+          `<li>Premium <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code></li>` +
+          (feeBase > 0n ? `<li>Fee <code>${formatDusdc(Number(feeBase))} dUSDC</code></li>` : "") +
+          `<li>Max payout <code>${formatDusdc(pricing.notional_dusdc)} dUSDC</code></li>` +
+          `<li>Net if right <code>+${formatDusdc(pricing.net_if_correct)} dUSDC</code></li>` +
+          `<li>Market-implied chance <code>${formatPercentage(pricing.implied_prob)}%</code></li>` +
+          `</ul>` +
+          `<blockquote>${aiContext}</blockquote>`;
       }
 
       const keyboard = new InlineKeyboard()
@@ -239,7 +246,7 @@ const amountMenuDynamic = async (ctx: Context, range: MenuRange<Context>) => {
         await ctx.deleteMessage();
       } catch (e) {}
 
-      await ctx.reply(preview, { reply_markup: keyboard });
+      await replyRich(ctx, preview, { reply_markup: keyboard });
     });
     range.row();
   }

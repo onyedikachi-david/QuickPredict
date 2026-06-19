@@ -13,6 +13,7 @@ import { getSponsorKeypair } from "../sui/wallets";
 import { getUserManagerId } from "../db/wallets";
 import { redeemPositionPermissionlessWithKeypair } from "../sui/predict";
 import type { Position } from "../db/schema";
+import { richHtml } from "../helpers/rich-message";
 
 // Guard against overlapping polling cycles processing the same position, and cap
 // on-chain redeem retries so a permanently failing position cannot spam the chain.
@@ -231,17 +232,17 @@ async function sendSettlementNotification(
       // the payout is still claimable on-chain (ranges, or a failed auto-redeem).
       const payoutLine =
         payoutMode === "trading_account"
-          ? `Your <code>${formatDusdc(position.notional_dusdc)} dUSDC</code> payout is in your trading account.\n` +
-            `Tap Claim (or /claim) to move it to your wallet.`
-          : `Your <code>${formatDusdc(position.notional_dusdc)} dUSDC</code> payout is ready.\n` +
-            `Tap Claim (or /claim) to move it to your wallet.`;
+          ? `<p>Your <code>${formatDusdc(position.notional_dusdc)} dUSDC</code> payout is in your trading account. Tap Claim or /claim to move it to your wallet.</p>`
+          : `<p>Your <code>${formatDusdc(position.notional_dusdc)} dUSDC</code> payout is ready. Tap Claim or /claim to move it to your wallet.</p>`;
 
       message =
-        `✅ <b>You won</b>\n\n` +
-        `${dirEmoji} ${positionDescription}\n` +
-        `${position.asset_symbol} settled at <code>$${formatPrice(settlementPrice)}</code>\n\n` +
-        `• Premium paid <code>${formatDusdc(position.premium_dusdc)} dUSDC</code>\n` +
-        `• Net profit <code>+${formatDusdc(netPnl)} dUSDC</code>\n\n` +
+        `<h1>You Won</h1>` +
+        `<p>${dirEmoji} ${positionDescription}</p>` +
+        `<ul>` +
+        `<li>${position.asset_symbol} settled at <code>$${formatPrice(settlementPrice)}</code></li>` +
+        `<li>Premium paid <code>${formatDusdc(position.premium_dusdc)} dUSDC</code></li>` +
+        `<li>Net profit <code>+${formatDusdc(netPnl)} dUSDC</code></li>` +
+        `</ul>` +
         payoutLine;
 
       keyboard.text("📤 Share win", `share_${position.internal_id}`);
@@ -249,17 +250,18 @@ async function sendSettlementNotification(
       keyboard.row();
     } else {
       message =
-        `❌ <b>Position lost</b>\n\n` +
-        `${dirEmoji} ${positionDescription}\n` +
-        `${position.asset_symbol} settled at <code>$${formatPrice(settlementPrice)}</code>\n\n` +
-        `• Premium lost <code>${formatDusdc(position.premium_dusdc)} dUSDC</code>`;
+        `<h1>Position Lost</h1>` +
+        `<p>${dirEmoji} ${positionDescription}</p>` +
+        `<ul>` +
+        `<li>${position.asset_symbol} settled at <code>$${formatPrice(settlementPrice)}</code></li>` +
+        `<li>Premium lost <code>${formatDusdc(position.premium_dusdc)} dUSDC</code></li>` +
+        `</ul>`;
     }
 
     keyboard.text("🔄 Trade again", "cmd_markets");
 
-    await bot.api.sendMessage(position.telegram_id, message, {
+    await bot.api.sendRichMessage(position.telegram_id, richHtml(message), {
       reply_markup: keyboard,
-      parse_mode: "HTML",
     });
   } catch (error) {
     logger.error(

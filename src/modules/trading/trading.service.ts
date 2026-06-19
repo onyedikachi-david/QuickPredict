@@ -57,7 +57,12 @@ import { getFollowers, getFollowCount } from "../../db/copy";
 import { generateTradeAIContext } from "../../ai/context";
 import type { Position } from "../../db/schema";
 import type { Oracle } from "../../predict/types";
-import { mintPosition, mintRangePosition, ensurePredictManager } from "../../sui/predict";
+import {
+  mintPosition,
+  mintRangePosition,
+  ensurePredictManager,
+} from "../../sui/predict";
+import { replyRich, editRich, sendRich } from "../../helpers/rich-message";
 import { getUserWalletAddress } from "../../sui/wallets";
 import { getSuiConfig } from "../../sui/config";
 import { getExplorerTxLink } from "../../sui/transactions";
@@ -103,7 +108,10 @@ export function formatStaleMarker(oracle?: Oracle | null): string {
 // balance. Any unused remainder simply stays in the manager (withdrawable).
 const PREMIUM_DEPOSIT_HEADROOM = 1.02;
 
-export function computeDepositBase(premiumBase: number, walletBase: number): bigint {
+export function computeDepositBase(
+  premiumBase: number,
+  walletBase: number,
+): bigint {
   const target = Math.ceil(premiumBase * PREMIUM_DEPOSIT_HEADROOM);
   const capped = Math.min(walletBase, target);
   return BigInt(Math.max(0, Math.floor(capped)));
@@ -122,7 +130,9 @@ export function computeTradeFee(premiumBase: number): bigint {
 // a decrypt fails. Surface a clear message instead of a cryptic crypto error.
 function isWrongPassword(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
-  return msg.includes("Invalid wallet password") || msg.includes("No wallet found");
+  return (
+    msg.includes("Invalid wallet password") || msg.includes("No wallet found")
+  );
 }
 
 const WRONG_PASSWORD_MSG =
@@ -132,7 +142,10 @@ function getExampleAsset(availableAssets: string[]): string {
   return availableAssets[0] || "ASSET";
 }
 
-function formatPricingModel(model: PricePreview["pricing_model"], askBoundsApplied: boolean): string {
+function formatPricingModel(
+  model: PricePreview["pricing_model"],
+  askBoundsApplied: boolean,
+): string {
   const label =
     model === "onchain"
       ? "on-chain quote"
@@ -145,14 +158,18 @@ function formatPricingModel(model: PricePreview["pricing_model"], askBoundsAppli
 function isStrikeOnOracleGrid(strike: number, oracle: Oracle): boolean {
   if (oracle.tick_size <= 0) return true;
   const steps = (strike - oracle.min_strike) / oracle.tick_size;
-  return strike >= oracle.min_strike && Math.abs(steps - Math.round(steps)) < 1e-9;
+  return (
+    strike >= oracle.min_strike && Math.abs(steps - Math.round(steps)) < 1e-9
+  );
 }
 
 function formatGridHint(oracle: Oracle): string {
   return `$${formatPrice(oracle.min_strike)} + n × $${formatPrice(oracle.tick_size)}`;
 }
 
-export async function checkVaultExposure(notionalDusdc: number): Promise<{ allowed: boolean; reason?: string }> {
+export async function checkVaultExposure(
+  notionalDusdc: number,
+): Promise<{ allowed: boolean; reason?: string }> {
   try {
     const config = getSuiConfig();
     const predictId = config.predictObjectId;
@@ -163,7 +180,10 @@ export async function checkVaultExposure(notionalDusdc: number): Promise<{ allow
     ]);
 
     if (state.trading_paused) {
-      return { allowed: false, reason: "Trading is currently paused on-chain." };
+      return {
+        allowed: false,
+        reason: "Trading is currently paused on-chain.",
+      };
     }
 
     // Default max exposure limit is 10% (0.10) if not specified in state
@@ -172,7 +192,10 @@ export async function checkVaultExposure(notionalDusdc: number): Promise<{ allow
 
     const totalValue = vault.vault_value || vault.vault_balance;
     if (!totalValue || totalValue <= 0) {
-      return { allowed: false, reason: "Vault value is invalid or pool has zero liquidity." };
+      return {
+        allowed: false,
+        reason: "Vault value is invalid or pool has zero liquidity.",
+      };
     }
 
     // Calculate utilization with the new trade notional
@@ -180,14 +203,18 @@ export async function checkVaultExposure(notionalDusdc: number): Promise<{ allow
     const projectedUtilization = newMaxPayout / totalValue;
 
     if (projectedUtilization > maxExposureLimit) {
-      const remainingExposureCapacity = Math.max(0, (totalValue * maxExposureLimit) - vault.total_max_payout);
+      const remainingExposureCapacity = Math.max(
+        0,
+        totalValue * maxExposureLimit - vault.total_max_payout,
+      );
       const remainingCapacityDusdc = remainingExposureCapacity / 1_000_000;
       return {
         allowed: false,
-        reason: `Vault exposure limit exceeded.\n\n` +
-                `Current Max Payout Utilization: ${formatPercentage(vault.max_payout_utilization)}%\n` +
-                `Max Exposure Limit: ${maxExposurePct}%\n` +
-                `Max affordable notional for this trade: ~${Math.floor(remainingCapacityDusdc)} dUSDC.`
+        reason:
+          `Vault exposure limit exceeded.\n\n` +
+          `Current Max Payout Utilization: ${formatPercentage(vault.max_payout_utilization)}%\n` +
+          `Max Exposure Limit: ${maxExposurePct}%\n` +
+          `Max affordable notional for this trade: ~${Math.floor(remainingCapacityDusdc)} dUSDC.`,
       };
     }
 
@@ -196,16 +223,20 @@ export async function checkVaultExposure(notionalDusdc: number): Promise<{ allow
       const availableDusdc = vault.available_liquidity / 1_000_000;
       return {
         allowed: false,
-        reason: `Insufficient vault liquidity.\n\n` +
-                `Available Liquidity: ${formatDusdc(vault.available_liquidity)} dUSDC\n` +
-                `Requested Notional: ${formatDusdc(notionalDusdc)} dUSDC.\n\n` +
-                `Please reduce your position size to under ${Math.floor(availableDusdc)} dUSDC.`
+        reason:
+          `Insufficient vault liquidity.\n\n` +
+          `Available Liquidity: ${formatDusdc(vault.available_liquidity)} dUSDC\n` +
+          `Requested Notional: ${formatDusdc(notionalDusdc)} dUSDC.\n\n` +
+          `Please reduce your position size to under ${Math.floor(availableDusdc)} dUSDC.`,
       };
     }
 
     return { allowed: true };
   } catch (error) {
-    logger.error({ error }, "Error checking vault exposure, bypassing risk check");
+    logger.error(
+      { error },
+      "Error checking vault exposure, bypassing risk check",
+    );
     return { allowed: true };
   }
 }
@@ -227,18 +258,20 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
   // Check rate limits
   const openCount = getPositionCount(user.telegram_id, "open");
   if (openCount >= MAX_POSITIONS_PER_USER) {
-    return ctx.reply(
-      `⚠️ You've hit the limit of ${MAX_POSITIONS_PER_USER} open positions.\n\nClose some before opening new ones.`
+    return replyRich(
+      ctx,
+      `<h1>Position Limit</h1><p>You've hit the limit of ${MAX_POSITIONS_PER_USER} open positions.</p><p>Close some before opening new ones.</p>`,
     );
   }
 
   const hourlyTradeCount = getUserTradeCount(
     user.telegram_id,
-    Date.now() - 60 * 60 * 1000
+    Date.now() - 60 * 60 * 1000,
   );
   if (hourlyTradeCount >= MAX_TRADES_PER_HOUR) {
-    return ctx.reply(
-      `⚠️ You've hit the limit of ${MAX_TRADES_PER_HOUR} trades this hour.\n\nTry again a bit later.`
+    return replyRich(
+      ctx,
+      `<h1>Rate Limit</h1><p>You've hit the limit of ${MAX_TRADES_PER_HOUR} trades this hour.</p><p>Try again a bit later.</p>`,
     );
   }
 
@@ -246,7 +279,10 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
   const availableAssets = await getAvailableAssets();
 
   if (availableAssets.length === 0) {
-    return ctx.reply("No active markets right now. Check back shortly.");
+    return replyRich(
+      ctx,
+      `<h1>No Markets</h1><p>No active markets right now. Check back shortly.</p>`,
+    );
   }
 
   // If no args, initiate the interactive trade builder menu
@@ -255,12 +291,13 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
       isUp,
       isRange: false,
     };
-    return ctx.reply(
-      `📊 <b>New ${isUp ? "Up" : "Down"} trade</b>\n` +
-      `Tap through the menu, or type it directly:\n` +
-      `<code>/${isUp ? "up" : "down"} [asset] [strike] [minutes] [amount]</code>\n\n` +
-      `<b>Pick an asset:</b>`,
-      { reply_markup: tradeBuilderAssetMenu }
+    return replyRich(
+      ctx,
+      `<h1>New ${isUp ? "Up" : "Down"} Trade</h1>` +
+        `<p>Tap through the menu, or type it directly:</p>` +
+        `<p><code>/${isUp ? "up" : "down"} [asset] [strike] [minutes] [amount]</code></p>` +
+        `<h2>Pick an asset:</h2>`,
+      { reply_markup: tradeBuilderAssetMenu },
     );
   }
 
@@ -270,12 +307,17 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
   let minutes: number;
   let amount: number;
 
-  if (availableAssets.length === 1 && !availableAssets.includes(args[0]?.toUpperCase())) {
+  if (
+    availableAssets.length === 1 &&
+    !availableAssets.includes(args[0]?.toUpperCase())
+  ) {
     asset = availableAssets[0];
     if (args.length < 3) {
-      return ctx.reply(
-        `Usage: <code>/${isUp ? "up" : "down"} &lt;strike&gt; &lt;minutes&gt; &lt;amount&gt;</code>\n\n` +
-          `Example: <code>/${isUp ? "up" : "down"} 71000 10 100</code>`
+      return replyRich(
+        ctx,
+        `<h1>Usage</h1>` +
+          `<p><code>/${isUp ? "up" : "down"} &lt;strike&gt; &lt;minutes&gt; &lt;amount&gt;</code></p>` +
+          `<p>Example: <code>/${isUp ? "up" : "down"} 71000 10 100</code></p>`,
       );
     }
     strike = parseFloat(args[0]);
@@ -285,10 +327,12 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
     // Multiple assets, first arg should be asset
     if (args.length < 4) {
       const exampleAsset = getExampleAsset(availableAssets);
-      return ctx.reply(
-        `Usage: <code>/${isUp ? "up" : "down"} &lt;asset&gt; &lt;strike&gt; &lt;minutes&gt; &lt;amount&gt;</code>\n\n` +
-          `Example: <code>/${isUp ? "up" : "down"} ${exampleAsset} 71000 10 100</code>\n\n` +
-          `Assets: ${availableAssets.join(", ")}`
+      return replyRich(
+        ctx,
+        `<h1>Usage</h1>` +
+          `<p><code>/${isUp ? "up" : "down"} &lt;asset&gt; &lt;strike&gt; &lt;minutes&gt; &lt;amount&gt;</code></p>` +
+          `<p>Example: <code>/${isUp ? "up" : "down"} ${exampleAsset} 71000 10 100</code></p>` +
+          `<p>Assets: ${availableAssets.join(", ")}</p>`,
       );
     }
     asset = args[0].toUpperCase();
@@ -299,34 +343,40 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
 
   // Validate asset
   if (!availableAssets.includes(asset)) {
-    return ctx.reply(
-      `${asset} isn't available right now.\n\nAssets: ${availableAssets.join(", ")}`
+    return replyRich(
+      ctx,
+      `<h1>Asset Unavailable</h1><p>${asset} isn't available right now.</p><p>Assets: ${availableAssets.join(", ")}</p>`,
     );
   }
 
   // Validate inputs
   if (isNaN(strike) || strike < 1000 || strike > 999999) {
-    return ctx.reply("Strike must be between 1,000 and 999,999.");
+    return replyRich(ctx, `<p>Strike must be between 1,000 and 999,999.</p>`);
   }
 
   if (isNaN(minutes) || minutes < 5 || minutes > 60) {
-    return ctx.reply("Duration must be between 5 and 60 minutes.");
+    return replyRich(ctx, `<p>Duration must be between 5 and 60 minutes.</p>`);
   }
 
   if (isNaN(amount) || amount < 1 || amount > 10000) {
-    return ctx.reply("Amount must be between 1 and 10,000 dUSDC.");
+    return replyRich(ctx, `<p>Amount must be between 1 and 10,000 dUSDC.</p>`);
   }
 
   // Find nearest oracle
   const oracle = await findNearestOracle(asset, minutes);
   if (!oracle) {
-    return ctx.reply(`No active market for ${asset} right now.`);
+    return replyRich(
+      ctx,
+      `<h1>No Market</h1><p>No active market for ${asset} right now.</p>`,
+    );
   }
 
   if (!isStrikeOnOracleGrid(strike, oracle)) {
-    return ctx.reply(
-      `That strike isn't on ${asset}'s price grid.\n\n` +
-        `Valid strikes: <code>${formatGridHint(oracle)}</code>`
+    return replyRich(
+      ctx,
+      `<h1>Invalid Strike</h1>` +
+        `<p>That strike isn't on ${asset}'s price grid.</p>` +
+        `<p>Valid strikes: <code>${formatGridHint(oracle)}</code></p>`,
     );
   }
 
@@ -336,10 +386,7 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
   // Pre-trade exposure risk check
   const riskCheck = await checkVaultExposure(notionalDusdc);
   if (!riskCheck.allowed) {
-    return ctx.reply(
-      `⚠️ <b>Trade blocked</b>\n\n` +
-      `${riskCheck.reason}`
-    );
+    return replyRich(ctx, `<h1>Trade Blocked</h1><p>${riskCheck.reason}</p>`);
   }
 
   const onchainQuote = await quoteBinaryTradeOnchain({
@@ -352,27 +399,28 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
     ? previewFromOnchainAmounts(
         onchainQuote.mintCostDusdc,
         notionalDusdc,
-        onchainQuote.redeemPayoutDusdc
+        onchainQuote.redeemPayoutDusdc,
       )
     : calculatePremiumFromOracle(
         strike,
         oracle,
         actualMinutes,
         notionalDusdc,
-        isUp
+        isUp,
       );
 
   // Check balance (premium + any broker fee)
   const feeBase = computeTradeFee(pricing.premium_dusdc);
   if (user.dusdc_balance < pricing.premium_dusdc + Number(feeBase)) {
     const maxAffordable = Math.floor(
-      (user.dusdc_balance / pricing.implied_prob) / 1_000_000
+      user.dusdc_balance / pricing.implied_prob / 1_000_000,
     );
-    return ctx.reply(
-      `<b>Not enough dUSDC</b>\n\n` +
-        `You have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>; this trade needs <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>.\n\n` +
-        `Biggest size you can afford: ~${maxAffordable} dUSDC.\n` +
-        `Try: <code>/${isUp ? "up" : "down"} ${asset} ${strike} ${actualMinutes} ${maxAffordable}</code>`
+    return replyRich(
+      ctx,
+      `<h1>Not Enough dUSDC</h1>` +
+        `<p>You have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>; this trade needs <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>.</p>` +
+        `<p>Biggest size you can afford: ~${maxAffordable} dUSDC.</p>` +
+        `<p>Try: <code>/${isUp ? "up" : "down"} ${asset} ${strike} ${actualMinutes} ${maxAffordable}</code></p>`,
     );
   }
 
@@ -390,7 +438,10 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
   // Create trade preview
   const direction = isUp ? "above" : "below";
   const dirEmoji = isUp ? "📈" : "📉";
-  const feeLine = feeBase > 0n ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n` : "";
+  const feeLine =
+    feeBase > 0n
+      ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n`
+      : "";
 
   const preview =
     `<b>Review trade</b>\n\n` +
@@ -427,7 +478,7 @@ async function handleTradeCommand(ctx: Context, isUp: boolean) {
     .text("✓ Confirm", `confirm_trade_${tradeKey}`)
     .text("✗ Cancel", `cancel_trade_${tradeKey}`);
 
-  return ctx.reply(preview, { reply_markup: keyboard });
+  return replyRich(ctx, preview, { reply_markup: keyboard });
 }
 
 export async function confirmTradeCallback(ctx: Context) {
@@ -439,7 +490,7 @@ export async function confirmTradeCallback(ctx: Context) {
   if (!trade || trade.expiresAt < Date.now()) {
     pendingTrades.delete(tradeKey);
     await ctx.answerCallbackQuery();
-    return ctx.editMessageText("Trade expired — please try again.");
+    return editRich(ctx, `<h1>Trade Expired</h1><p>Please try again.</p>`);
   }
 
   if (trade.ownerId !== ctx.from.id.toString()) {
@@ -455,10 +506,11 @@ export async function confirmTradeCallback(ctx: Context) {
   if (!walletAddress) {
     pendingTrades.delete(tradeKey);
     await ctx.answerCallbackQuery();
-    return ctx.editMessageText(
-      `👛 <b>No wallet yet</b>\n\n` +
-        `Create one first:\n` +
-        `<code>/wallet create your-password</code>`
+    return editRich(
+      ctx,
+      `<h1>No Wallet</h1>` +
+        `<p>Create one first:</p>` +
+        `<p><code>/wallet create your-password</code></p>`,
     );
   }
 
@@ -468,20 +520,22 @@ export async function confirmTradeCallback(ctx: Context) {
   if (user.dusdc_balance < trade.premium + Number(feeBase)) {
     pendingTrades.delete(tradeKey);
     await ctx.answerCallbackQuery();
-    return ctx.editMessageText(
-      `<b>Not enough dUSDC</b>\n\n` +
-        `This trade needs <code>${formatDusdc(trade.premium)} dUSDC</code>; you have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>.`
+    return editRich(
+      ctx,
+      `<h1>Not Enough dUSDC</h1>` +
+        `<p>This trade needs <code>${formatDusdc(trade.premium)} dUSDC</code>; you have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>.</p>`,
     );
   }
 
   await ctx.answerCallbackQuery({ text: "Awaiting password..." });
 
   // Edit original message to show password input state
-  await ctx.editMessageText(
-    `<b>Confirm trade</b>\n\n` +
-      `${formatTradeLabel(trade)}\n` +
-      `Premium <code>${formatDusdc(trade.premium)} dUSDC</code>\n\n` +
-      `🔑 <i>Enter your password below to sign.</i>`
+  await editRich(
+    ctx,
+    `<h1>Confirm Trade</h1>` +
+      `<p>${formatTradeLabel(trade)}</p>` +
+      `<p>Premium <code>${formatDusdc(trade.premium)} dUSDC</code></p>` +
+      `<p><i>Enter your password below to sign.</i></p>`,
   );
 
   // Pass the trade key + label in via enter() args. Conversations v2 replays the
@@ -509,7 +563,7 @@ export async function cancelTradeCallback(ctx: Context) {
   pendingTrades.delete(tradeKey);
   await ctx.answerCallbackQuery();
 
-  return ctx.editMessageText("Trade cancelled.");
+  return editRich(ctx, `<h1>Trade Cancelled</h1>`);
 }
 
 export async function confirmCopyCallback(ctx: Context) {
@@ -518,7 +572,10 @@ export async function confirmCopyCallback(ctx: Context) {
   const match = ctx.callbackQuery.data.match(/^copy_confirm_(.+)_(\d+)$/);
   if (!match) {
     await ctx.answerCallbackQuery();
-    return ctx.editMessageText("Couldn't read that copy request.");
+    return editRich(
+      ctx,
+      `<h1>Error</h1><p>Couldn't read that copy request.</p>`,
+    );
   }
 
   const [, sourcePositionId, followerId] = match;
@@ -533,7 +590,10 @@ export async function confirmCopyCallback(ctx: Context) {
   const sourcePosition = getPositionById(sourcePositionId);
   if (!sourcePosition || sourcePosition.status !== "open") {
     await ctx.answerCallbackQuery();
-    return ctx.editMessageText("That trade is no longer available to copy.");
+    return editRich(
+      ctx,
+      `<h1>Unavailable</h1><p>That trade is no longer available to copy.</p>`,
+    );
   }
 
   const user = getOrCreateUser(followerId, ctx.from.username);
@@ -541,10 +601,11 @@ export async function confirmCopyCallback(ctx: Context) {
 
   if (!walletAddress) {
     await ctx.answerCallbackQuery();
-    return ctx.editMessageText(
-      `👛 <b>No wallet yet</b>\n\n` +
-        `Create one first:\n` +
-        `<code>/wallet create your-password</code>`
+    return editRich(
+      ctx,
+      `<h1>No Wallet</h1>` +
+        `<p>Create one first:</p>` +
+        `<p><code>/wallet create your-password</code></p>`,
     );
   }
 
@@ -552,9 +613,10 @@ export async function confirmCopyCallback(ctx: Context) {
   await syncUserBalanceWithOnchain(user.telegram_id);
   if (user.dusdc_balance < sourcePosition.premium_dusdc) {
     await ctx.answerCallbackQuery();
-    return ctx.editMessageText(
-      `<b>Not enough dUSDC</b>\n\n` +
-        `This trade needs <code>${formatDusdc(sourcePosition.premium_dusdc)} dUSDC</code>; you have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>.`
+    return editRich(
+      ctx,
+      `<h1>Not Enough dUSDC</h1>` +
+        `<p>This trade needs <code>${formatDusdc(sourcePosition.premium_dusdc)} dUSDC</code>; you have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>.</p>`,
     );
   }
 
@@ -563,11 +625,12 @@ export async function confirmCopyCallback(ctx: Context) {
   const tradeLabel = formatPositionLabel(sourcePosition);
 
   // Edit original message to show password input state
-  await ctx.editMessageText(
-    `<b>Confirm copy trade</b>\n\n` +
-      `${tradeLabel}\n` +
-      `Premium <code>${formatDusdc(sourcePosition.premium_dusdc)} dUSDC</code>\n\n` +
-      `🔑 <i>Enter your password below to sign.</i>`
+  await editRich(
+    ctx,
+    `<h1>Confirm Copy Trade</h1>` +
+      `<p>${tradeLabel}</p>` +
+      `<p>Premium <code>${formatDusdc(sourcePosition.premium_dusdc)} dUSDC</code></p>` +
+      `<p><i>Enter your password below to sign.</i></p>`,
   );
 
   await ctx.conversation.enter("signTransactionConversation", {
@@ -589,7 +652,7 @@ export async function skipCopyCallback(ctx: Context) {
   }
 
   await ctx.answerCallbackQuery();
-  return ctx.editMessageText("Skipped copy trade.");
+  return editRich(ctx, `<h1>Skipped</h1><p>Copy trade skipped.</p>`);
 }
 
 type SignTxArgs = { tradeKey?: string; copyPositionId?: string; label: string };
@@ -597,20 +660,27 @@ type SignTxArgs = { tradeKey?: string; copyPositionId?: string; label: string };
 export async function signTransactionConversation(
   conversation: MyConversation,
   ctx: Context,
-  args: SignTxArgs
+  args: SignTxArgs,
 ) {
   // Data arrives via enter() args, never ctx.session: conversations v2 replays this
   // builder from the top on every update, and the outer session is not on the
   // conversation's context (read it via conversation.external if ever needed).
   if (!args || (!args.tradeKey && !args.copyPositionId)) {
-    await ctx.reply("Something went wrong — no pending trade found. Try again.");
+    await replyRich(
+      ctx,
+      `<h1>Error</h1><p>Something went wrong — no pending trade found. Try again.</p>`,
+    );
     return;
   }
 
   // Ask for the password via ForceReply so Telegram auto-focuses the keyboard.
-  await ctx.reply(
-    `🔑 <b>Enter your password to sign</b>\n\n<i>${args.tradeKey ? "For" : "Copying"} ${args.label}</i>`,
-    { reply_markup: { force_reply: true, selective: true } }
+  await replyRich(
+    ctx,
+    `<h1>Enter Password to Sign</h1>` +
+      `<p><i>${args.tradeKey ? "For" : "Copying"} ${args.label}</i></p>`,
+    {
+      reply_markup: { force_reply: true, selective: true },
+    },
   );
 
   // Capture the user's next text message (the password).
@@ -623,11 +693,14 @@ export async function signTransactionConversation(
     .catch((err) => logger.warn(`Failed to delete password message: ${err}`));
 
   if (password.toLowerCase() === "cancel" || password === "/cancel") {
-    await passwordCtx.reply("Signing cancelled.");
+    await replyRich(passwordCtx, `<p>Signing cancelled.</p>`);
     return;
   }
   if (password.startsWith("/")) {
-    await passwordCtx.reply("Signing cancelled. Run the command again when ready.");
+    await replyRich(
+      passwordCtx,
+      `<p>Signing cancelled. Run the command again when ready.</p>`,
+    );
     return;
   }
 
@@ -636,19 +709,33 @@ export async function signTransactionConversation(
   if (args.tradeKey) {
     await executeMintTransaction(passwordCtx, args.tradeKey, password);
   } else {
-    await executeCopyMintTransaction(passwordCtx, args.copyPositionId!, password);
+    await executeCopyMintTransaction(
+      passwordCtx,
+      args.copyPositionId!,
+      password,
+    );
   }
 }
 
-async function executeMintTransaction(ctx: Context, tradeKey: string, password: string) {
+async function executeMintTransaction(
+  ctx: Context,
+  tradeKey: string,
+  password: string,
+) {
   if (!ctx.from || !ctx.chat) return;
   const trade = pendingTrades.get(tradeKey);
   if (!trade) {
-    return ctx.reply("This trade preview has expired. Start again from /markets.");
+    return replyRich(
+      ctx,
+      `<h1>Trade Expired</h1><p>This trade preview has expired. Start again from /markets.</p>`,
+    );
   }
   pendingTrades.delete(tradeKey);
 
-  const statusMsg = await ctx.reply("⏳ <i>Unlocking your wallet and preparing the transaction…</i>");
+  const statusMsg = await replyRich(
+    ctx,
+    `<p><i>Unlocking your wallet and preparing the transaction...</i></p>`,
+  );
 
   try {
     const config = getSuiConfig();
@@ -658,17 +745,18 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
     const managerResult = await ensurePredictManager(trade.ownerId, password);
     if (!managerResult.ok) {
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
-      return ctx.reply(
+      return replyRich(
+        ctx,
         isWrongPassword(managerResult.error)
           ? WRONG_PASSWORD_MSG
-          : `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`
+          : `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`,
       );
     }
     if (managerResult.created) {
       await ctx.api.editMessageText(
         ctx.chat.id,
         statusMsg.message_id,
-        "✅ <i>Trading account ready — minting your option…</i>"
+        "✅ <i>Trading account ready — minting your option…</i>",
       );
     }
     const managerObjectId = managerResult.managerId;
@@ -679,7 +767,10 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
     const feeBase = computeTradeFee(trade.premium);
     const treasury = getNetworkConfig().fee.treasury;
     const walletBase = getUserBalance(trade.ownerId);
-    const depositBase = computeDepositBase(trade.premium, walletBase - Number(feeBase));
+    const depositBase = computeDepositBase(
+      trade.premium,
+      walletBase - Number(feeBase),
+    );
 
     let result;
     const isRange = trade.positionType === "range";
@@ -718,7 +809,10 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
 
     if (!result.success) {
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
-      return ctx.reply(`❌ <b>Trade failed</b>\n\n<code>${result.error || "Unknown error"}</code>`);
+      return replyRich(
+        ctx,
+        `<h1>Trade Failed</h1><pre>${result.error || "Unknown error"}</pre>`,
+      );
     }
 
     const updatedBalance = await syncUserBalanceWithOnchain(trade.ownerId);
@@ -741,7 +835,8 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
     updatePositionTxHash(position.internal_id, result.digest);
 
     const txLink = getExplorerTxLink(result.digest);
-    const dirEmoji = trade.positionType === "range" ? "↔" : trade.isUp ? "📈" : "📉";
+    const dirEmoji =
+      trade.positionType === "range" ? "↔" : trade.isUp ? "📈" : "📉";
     const successMsg =
       `✅ <b>Position opened</b>\n\n` +
       `${dirEmoji} ${formatTradeLabel(trade)}\n` +
@@ -755,7 +850,7 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
       .text("📤 Share", `share_${position.internal_id}`);
 
     await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
-    await ctx.reply(successMsg, { reply_markup: keyboard, link_preview_options: { is_disabled: true } });
+    await replyRich(ctx, successMsg, { reply_markup: keyboard });
 
     // Notify followers
     const followers = getFollowers(trade.ownerId);
@@ -765,24 +860,30 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
     for (const follow of followers) {
       try {
         const followerKeyboard = new InlineKeyboard()
-          .text("✓ Copy", `copy_confirm_${position.internal_id}_${follow.follower_id}`)
+          .text(
+            "✓ Copy",
+            `copy_confirm_${position.internal_id}_${follow.follower_id}`,
+          )
           .text("✗ Skip", `copy_skip_${follow.follower_id}`);
 
-        const dirEmoji = trade.positionType === "range" ? "↔" : trade.isUp ? "📈" : "📉";
-        await ctx.api.sendMessage(
+        const dirEmoji =
+          trade.positionType === "range" ? "↔" : trade.isUp ? "📈" : "📉";
+        await sendRich(
+          ctx,
           follow.follower_id,
           `👥 <b>A trader you copy just opened a trade</b>\n\n` +
             `@${user.username || "User"} opened:\n` +
             `${dirEmoji} ${tradeLabel}\n` +
             `Premium <code>${formatDusdc(trade.premium)} dUSDC</code> · expires in ${formatDuration(trade.minutes)}\n\n` +
             `Copy it?`,
-          { reply_markup: followerKeyboard, parse_mode: "HTML" }
+          { reply_markup: followerKeyboard },
         );
       } catch (error) {
-        logger.warn(`Failed to notify follower ${follow.follower_id}: ${error}`);
+        logger.warn(
+          `Failed to notify follower ${follow.follower_id}: ${error}`,
+        );
       }
     }
-
   } catch (error) {
     logger.error({ error }, "Error executing mint transaction");
     if (ctx.chat) {
@@ -790,21 +891,34 @@ async function executeMintTransaction(ctx: Context, tradeKey: string, password: 
         await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
       } catch (e) {}
     }
-    if (isWrongPassword(error)) return ctx.reply(WRONG_PASSWORD_MSG);
-    return ctx.reply(`❌ <b>Something went wrong</b>\n\n<code>${error instanceof Error ? error.message : String(error)}</code>`);
+    if (isWrongPassword(error)) return replyRich(ctx, WRONG_PASSWORD_MSG);
+    return replyRich(
+      ctx,
+      `<h1>Something Went Wrong</h1><pre>${error instanceof Error ? error.message : String(error)}</pre>`,
+    );
   }
 }
 
-async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string, password: string) {
+async function executeCopyMintTransaction(
+  ctx: Context,
+  sourcePositionId: string,
+  password: string,
+) {
   if (!ctx.from || !ctx.chat) return;
   const followerId = ctx.from.id.toString();
 
   const sourcePosition = getPositionById(sourcePositionId);
   if (!sourcePosition || sourcePosition.status !== "open") {
-    return ctx.reply("That trade can no longer be copied.");
+    return replyRich(
+      ctx,
+      `<h1>Cannot Copy</h1><p>That trade can no longer be copied.</p>`,
+    );
   }
 
-  const statusMsg = await ctx.reply("⏳ <i>Unlocking your wallet and preparing the copy…</i>");
+  const statusMsg = await replyRich(
+    ctx,
+    `<p><i>Unlocking your wallet and preparing the copy...</i></p>`,
+  );
 
   try {
     const config = getSuiConfig();
@@ -814,23 +928,24 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
     const managerResult = await ensurePredictManager(followerId, password);
     if (!managerResult.ok) {
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
-      return ctx.reply(
+      return replyRich(
+        ctx,
         isWrongPassword(managerResult.error)
           ? WRONG_PASSWORD_MSG
-          : `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`
+          : `❌ <b>Couldn't set up your trading account</b>\n\n<code>${managerResult.error}</code>`,
       );
     }
     if (managerResult.created) {
       await ctx.api.editMessageText(
         ctx.chat.id,
         statusMsg.message_id,
-        "✅ <i>Trading account ready — copying the position…</i>"
+        "✅ <i>Trading account ready — copying the position…</i>",
       );
     }
     const managerObjectId = managerResult.managerId;
     const depositBase = computeDepositBase(
       sourcePosition.premium_dusdc,
-      getUserBalance(followerId)
+      getUserBalance(followerId),
     );
 
     let result;
@@ -866,7 +981,10 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
 
     if (!result.success) {
       await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
-      return ctx.reply(`❌ <b>Copy failed</b>\n\n<code>${result.error || "Unknown error"}</code>`);
+      return replyRich(
+        ctx,
+        `<h1>Copy Failed</h1><pre>${result.error || "Unknown error"}</pre>`,
+      );
     }
 
     const updatedBalance = await syncUserBalanceWithOnchain(followerId);
@@ -889,7 +1007,8 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
     updatePositionTxHash(position.internal_id, result.digest);
 
     const txLink = getExplorerTxLink(result.digest);
-    const dirEmoji = position.position_type === "range" ? "↔" : position.is_up ? "📈" : "📉";
+    const dirEmoji =
+      position.position_type === "range" ? "↔" : position.is_up ? "📈" : "📉";
     const successMsg =
       `✅ <b>Copy position opened</b>\n\n` +
       `${dirEmoji} ${formatPositionLabel(position)}\n` +
@@ -903,8 +1022,7 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
       .text("📤 Share", `share_${position.internal_id}`);
 
     await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
-    await ctx.reply(successMsg, { reply_markup: keyboard, link_preview_options: { is_disabled: true } });
-
+    await replyRich(ctx, successMsg, { reply_markup: keyboard });
   } catch (error) {
     logger.error({ error }, "Error executing copy mint transaction");
     if (ctx.chat) {
@@ -912,19 +1030,22 @@ async function executeCopyMintTransaction(ctx: Context, sourcePositionId: string
         await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id);
       } catch (e) {}
     }
-    if (isWrongPassword(error)) return ctx.reply(WRONG_PASSWORD_MSG);
-    return ctx.reply(`❌ <b>Something went wrong</b>\n\n<code>${error instanceof Error ? error.message : String(error)}</code>`);
+    if (isWrongPassword(error)) return replyRich(ctx, WRONG_PASSWORD_MSG);
+    return replyRich(
+      ctx,
+      `<h1>Something Went Wrong</h1><pre>${error instanceof Error ? error.message : String(error)}</pre>`,
+    );
   }
 }
 
 export async function marketsCommand(ctx: Context) {
   const message = await generateMarketsMessage(ctx);
-  return ctx.reply(message, { reply_markup: marketsMenu });
+  return replyRich(ctx, message, { reply_markup: marketsMenu });
 }
 
 export async function statusCommand(ctx: Context) {
   const message = await generateStatusMessage(ctx);
-  return ctx.reply(message, { reply_markup: statusMenu });
+  return replyRich(ctx, message, { reply_markup: statusMenu });
 }
 
 /**
@@ -934,7 +1055,7 @@ export async function statusCommand(ctx: Context) {
  */
 async function formatRecentActivity(managerId: string | null): Promise<string> {
   if (!managerId) {
-    return `<i>No on-chain activity yet. Place a trade with /up or /down.</i>`;
+    return `<p><i>No on-chain activity yet. Place a trade with /up or /down.</i></p>`;
   }
 
   const [minted, redeemed] = await Promise.all([
@@ -946,10 +1067,13 @@ async function formatRecentActivity(managerId: string | null): Promise<string> {
     ...minted.map((e) => ({ kind: "open" as const, ...e })),
     ...redeemed.map((e) => ({ kind: "close" as const, ...e })),
   ]
-    .sort((a, b) => Number(b.checkpoint_timestamp_ms) - Number(a.checkpoint_timestamp_ms))
+    .sort(
+      (a, b) =>
+        Number(b.checkpoint_timestamp_ms) - Number(a.checkpoint_timestamp_ms),
+    )
     .slice(0, 5);
 
-  if (events.length === 0) return `<i>No on-chain activity yet.</i>`;
+  if (events.length === 0) return `<p><i>No on-chain activity yet.</i></p>`;
 
   const oracleIds = [...new Set(events.map((e) => e.oracle_id))];
   const assets = new Map<string, string>();
@@ -961,23 +1085,25 @@ async function formatRecentActivity(managerId: string | null): Promise<string> {
       } catch {
         /* leave unresolved */
       }
-    })
+    }),
   );
 
-  return events
-    .map((e) => {
-      const asset = assets.get(e.oracle_id) || "";
-      const dir = e.is_up ? "UP" : "DOWN";
-      const label = `${asset ? asset + " " : ""}${dir} $${formatPrice(Number(e.strike) / 1_000_000_000)}`;
-      if (e.kind === "open") {
-        return `• Opened ${label} · paid ${formatDusdc(Number(e.cost ?? 0))} dUSDC`;
-      }
-      const payout = Number(e.payout ?? 0);
-      return payout > 0
-        ? `✅ Won ${label} · +${formatDusdc(payout)} dUSDC`
-        : `❌ Lost ${label}`;
-    })
-    .join("\n");
+  const items = events.map((e) => {
+    const asset = assets.get(e.oracle_id) || "";
+    const dirEmoji = e.is_up ? "📈" : "📉";
+    const dir = e.is_up ? "above" : "below";
+    const strike = `$${formatPrice(Number(e.strike) / 1_000_000_000)}`;
+    const label = `${asset ? `<b>${asset}</b> ` : ""}${dir} <code>${strike}</code>`;
+    if (e.kind === "open") {
+      return `<li>${dirEmoji} Opened ${label} · paid <code>${formatDusdc(Number(e.cost ?? 0))} dUSDC</code></li>`;
+    }
+    const payout = Number(e.payout ?? 0);
+    return payout > 0
+      ? `<li>✅ Won ${label} · <code>+${formatDusdc(payout)} dUSDC</code></li>`
+      : `<li>❌ Lost ${label}</li>`;
+  });
+
+  return `<ul>${items.join("")}</ul>`;
 }
 
 export async function balanceCommand(ctx: Context) {
@@ -987,35 +1113,41 @@ export async function balanceCommand(ctx: Context) {
   await syncUserBalanceWithOnchain(telegramId);
   const user = getOrCreateUser(telegramId, ctx.from.username);
   const managerId = getUserManagerId(telegramId);
+  const signed = (v: number) => `${v >= 0 ? "+" : ""}${formatDusdc(v)}`;
 
-  let message =
-    `💰 <b>Balance</b>\n\n` +
-    `• Wallet <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>\n` +
-    `• Record <code>${user.win_count}W · ${user.loss_count}L</code>`;
-  if (user.streak > 0) message += ` · ${user.streak} win streak`;
-  message += `\n`;
+  let message = `<h1>Balance</h1>`;
+
+  // Wallet row
+  let recordLine = `<code>${user.win_count}W · ${user.loss_count}L</code>`;
+  if (user.streak > 0) recordLine += ` · ${user.streak} win streak 🔥`;
+  message +=
+    `<ul>` +
+    `<li>Wallet <code>${formatDusdc(user.dusdc_balance)} dUSDC</code></li>` +
+    `<li>Record ${recordLine}</li>` +
+    `</ul>`;
 
   // On-chain Trading Account (PredictManager) — the authoritative balance + PnL.
   if (managerId) {
     const summary = await fetchManagerSummary(managerId);
+    message += `<h2>Trading Account</h2>`;
     if (summary) {
-      const signed = (v: number) => `${v >= 0 ? "+" : ""}${formatDusdc(v)}`;
-      message += `\n<b>Trading account</b>\n`;
-      message += `• Claimable <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}\n`;
-      message += `• At risk (open) <code>${formatDusdc(summary.open_exposure)} dUSDC</code>\n`;
-      message += `• Realized PnL <code>${signed(summary.realized_pnl)} dUSDC</code>\n`;
-      message += `• Unrealized PnL <code>${signed(summary.unrealized_pnl)} dUSDC</code>\n`;
+      const claimSuffix = summary.trading_balance > 0 ? " · /claim" : "";
+      message +=
+        `<ul>` +
+        `<li>Claimable <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${claimSuffix}</li>` +
+        `<li>At risk <code>${formatDusdc(summary.open_exposure)} dUSDC</code></li>` +
+        `<li>Realized PnL <code>${signed(summary.realized_pnl)} dUSDC</code></li>` +
+        `<li>Unrealized PnL <code>${signed(summary.unrealized_pnl)} dUSDC</code></li>` +
+        `</ul>`;
     } else {
-      // Indexer hiccup (e.g. its 500 "missing mark quote results" on some open
-      // positions) — say so instead of silently dropping the section.
-      message += `\n<b>Trading account</b>\n<i>Details unavailable right now — try again shortly.</i>\n`;
+      message += `<p><i>Details unavailable right now — try again shortly.</i></p>`;
     }
   }
 
-  message += `\n<b>Recent activity</b>\n`;
+  message += `<h2>Recent Activity</h2>`;
   message += await formatRecentActivity(managerId);
 
-  return ctx.reply(message);
+  return replyRich(ctx, message);
 }
 
 /**
@@ -1027,20 +1159,27 @@ export async function accountCommand(ctx: Context) {
   if (!ctx.from) return;
 
   const telegramId = ctx.from.id.toString();
-  const netLabel = getNetworkConfig().network === "mainnet" ? "Mainnet" : "Testnet";
+  const netLabel =
+    getNetworkConfig().network === "mainnet" ? "Mainnet" : "Testnet";
   const user = getOrCreateUser(telegramId, ctx.from.username);
   const address = getUserWalletAddress(telegramId);
 
-  let message = `👤 <b>Account</b> · <code>${netLabel}</code>\n`;
-
-  // ── Wallet (on-chain) ──
+  // ── No wallet yet ──
   if (!address) {
-    message +=
-      `\n👛 <b>Wallet</b>\n` +
-      `Not created yet. Make one with <code>/wallet create your-password</code>, then add funds to start.`;
-    return ctx.reply(message);
+    const keyboard = new InlineKeyboard().text("📖 Help", "cmd_help");
+    return replyRich(
+      ctx,
+      `<h1>Account</h1>` +
+        `<p><i>${netLabel}</i></p>` +
+        `<h2>Wallet</h2>` +
+        `<p>No wallet yet.</p>` +
+        `<p>Create one to start trading:</p>` +
+        `<p><code>/wallet create your-password</code></p>`,
+      { reply_markup: keyboard },
+    );
   }
 
+  // Fetch on-chain balances in parallel
   await syncUserBalanceWithOnchain(telegramId);
   let suiStr = "unavailable";
   let dusdcStr = "unavailable";
@@ -1048,7 +1187,7 @@ export async function accountCommand(ctx: Context) {
   try {
     const sui = await getCoinBalance(address, "0x2::sui::SUI");
     suiStr = `${formatCoinAmount(sui, 9)} SUI`;
-    lowGas = sui < 200_000_000n; // < 0.2 SUI
+    lowGas = sui < 200_000_000n;
   } catch (e) {
     ctx.logger.warn({ error: e }, "account: SUI balance unavailable");
   }
@@ -1059,67 +1198,87 @@ export async function accountCommand(ctx: Context) {
     ctx.logger.warn({ error: e }, "account: dUSDC balance unavailable");
   }
 
-  message += `\n👛 <b>Wallet</b>\n`;
-  message += `• Address <code>${address}</code>\n`;
-  message += `• Gas <code>${suiStr}</code>${lowGas ? " ⚠️ low — add SUI" : ""}\n`;
-  message += `• Collateral <code>${dusdcStr}</code>\n`;
+  const signed = (v: number) => `${v >= 0 ? "+" : ""}${formatDusdc(v)}`;
 
-  // ── Trading Account (on-chain PredictManager, via the indexer) ──
+  let message = `<h1>Account</h1><p><i>${netLabel}</i></p>`;
+
+  // ── Wallet ──
+  message += `<h2>Wallet</h2>`;
+  message += `<ul>`;
+  message += `<li>Address <code>${address}</code></li>`;
+  message += `<li>Gas <code>${suiStr}</code>${lowGas ? " ⚠️ low — add SUI" : ""}</li>`;
+  message += `<li>Collateral <code>${dusdcStr}</code></li>`;
+  message += `</ul>`;
+
+  // ── Trading Account ──
   const managerId = getUserManagerId(telegramId);
+  message += `<h2>Trading Account</h2>`;
   if (!managerId) {
-    message += `\n<b>Trading account</b>\nNot set up yet — created automatically on your first trade.\n`;
+    message += `<p><i>Not set up yet — created automatically on your first trade.</i></p>`;
   } else {
     const summary = await fetchManagerSummary(managerId);
     if (summary) {
-      const signed = (v: number) => `${v >= 0 ? "+" : ""}${formatDusdc(v)}`;
-      message += `\n<b>Trading account</b>\n`;
-      message += `• Claimable <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}\n`;
-      message += `• Account value <code>${formatDusdc(summary.account_value)} dUSDC</code>\n`;
-      message += `• At risk (open) <code>${formatDusdc(summary.open_exposure)} dUSDC</code>\n`;
-      message += `• Realized PnL <code>${signed(summary.realized_pnl)} dUSDC</code>\n`;
-      message += `• Unrealized PnL <code>${signed(summary.unrealized_pnl)} dUSDC</code>\n`;
-      message += `• Open positions <code>${summary.open_positions}</code>`;
+      const claimSuffix = summary.trading_balance > 0 ? " · /claim" : "";
+      let posLine = `<code>${summary.open_positions}</code>`;
       if (summary.awaiting_settlement_positions) {
-        message += ` (awaiting settlement: ${summary.awaiting_settlement_positions})`;
+        posLine += ` <i>(${summary.awaiting_settlement_positions} awaiting settlement)</i>`;
       }
-      message += `\n`;
+      message += `<ul>`;
+      message += `<li>Claimable <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${claimSuffix}</li>`;
+      message += `<li>Account value <code>${formatDusdc(summary.account_value)} dUSDC</code></li>`;
+      message += `<li>At risk <code>${formatDusdc(summary.open_exposure)} dUSDC</code></li>`;
+      message += `<li>Realized PnL <code>${signed(summary.realized_pnl)} dUSDC</code></li>`;
+      message += `<li>Unrealized PnL <code>${signed(summary.unrealized_pnl)} dUSDC</code></li>`;
+      message += `<li>Open positions ${posLine}</li>`;
+      message += `</ul>`;
     } else {
-      message += `\n<b>Trading account</b> <code>${managerId.slice(0, 10)}…</code> (details unavailable right now)\n`;
+      message += `<p><i>Details unavailable right now — try again shortly.</i></p>`;
     }
 
+    // ── Open Positions ──
     const positions = await fetchManagerPositions(managerId);
-    const open = positions.filter((p) => Number(p.open_quantity) > 0).slice(0, 5);
+    const open = positions
+      .filter((p) => Number(p.open_quantity) > 0)
+      .slice(0, 5);
     if (open.length) {
-      message += `\n<b>Open positions</b>\n`;
+      message += `<h2>Open Positions</h2><ul>`;
       for (const p of open) {
         const dirEmoji = p.is_up ? "📈" : "📉";
-        const dir = p.is_up ? "above" : "below";
-        const asset = p.underlying_asset ? `${p.underlying_asset} ` : "";
+        const asset = p.underlying_asset ? `<b>${p.underlying_asset}</b> ` : "";
         const strike = formatPrice(Number(p.strike) / 1_000_000_000);
-        const qty = formatDusdc(Number(p.open_quantity));
+        const posLabel = `${asset}${p.is_up ? "above" : "below"} <code>$${strike}</code>`;
+        const qty = `<code>${formatDusdc(Number(p.open_quantity))} dUSDC</code>`;
         const upnl =
           p.unrealized_pnl != null
-            ? ` · uPnL ${Number(p.unrealized_pnl) >= 0 ? "+" : ""}${formatDusdc(Number(p.unrealized_pnl))}`
+            ? ` · uPnL <code>${Number(p.unrealized_pnl) >= 0 ? "+" : ""}${formatDusdc(Number(p.unrealized_pnl))} dUSDC</code>`
             : "";
-        message += `${dirEmoji} ${asset}${dir} <code>$${strike}</code> · <code>$${qty}</code>${upnl}\n`;
+        message += `<li>${dirEmoji} ${posLabel} · ${qty}${upnl}</li>`;
       }
+      message += `</ul>`;
     }
   }
 
-  // ── Recent activity (on-chain) ──
-  message += `\n<b>Recent activity</b>\n${await formatRecentActivity(managerId)}\n`;
+  // ── Recent Activity ──
+  message += `<h2>Recent Activity</h2>`;
+  message += await formatRecentActivity(managerId);
 
-  // ── Track record (off-chain stat) ──
-  message += `\n<b>Record</b> <code>${user.win_count}W · ${user.loss_count}L</code>`;
-  if (user.streak > 0) message += ` · ${user.streak} streak`;
-  if (user.best_streak > 0) message += ` · best ${user.best_streak}`;
-  message += `\n`;
+  // ── Track Record ──
+  let recordLine = `<code>${user.win_count}W · ${user.loss_count}L</code>`;
+  if (user.streak > 0) recordLine += ` · ${user.streak} streak 🔥`;
+  if (user.best_streak > 1) recordLine += ` · best ${user.best_streak}`;
+  message += `<h2>Record</h2><p>${recordLine}</p>`;
 
-  // ── Social (off-chain) ──
+  // ── Social ──
   const following = getFollowCount(telegramId);
   const followers = getFollowers(telegramId).length;
-  if (following || followers) {
-    message += `\n<b>Social</b> following ${following} · ${followers} follower${followers === 1 ? "" : "s"}\n`;
+  if (following > 0 || followers > 0) {
+    message += `<h2>Social</h2>`;
+    message += `<ul>`;
+    if (following > 0)
+      message += `<li>Following <code>${following}</code> trader${following === 1 ? "" : "s"}</li>`;
+    if (followers > 0)
+      message += `<li><code>${followers}</code> follower${followers === 1 ? "" : "s"}</li>`;
+    message += `</ul>`;
   }
 
   const keyboard = new InlineKeyboard()
@@ -1128,7 +1287,7 @@ export async function accountCommand(ctx: Context) {
     .row()
     .text("🎁 Claim", "cmd_claim");
 
-  return ctx.reply(message, { reply_markup: keyboard });
+  return replyRich(ctx, message, { reply_markup: keyboard });
 }
 
 export async function rangeCommand(ctx: Context) {
@@ -1141,23 +1300,28 @@ export async function rangeCommand(ctx: Context) {
   // Check rate limits
   const openCount = getPositionCount(user.telegram_id, "open");
   if (openCount >= MAX_POSITIONS_PER_USER) {
-    return ctx.reply(
-      `⚠️ You've hit the limit of ${MAX_POSITIONS_PER_USER} open positions.\n\nClose some before opening new ones.`
+    return replyRich(
+      ctx,
+      `<h1>Position Limit</h1><p>You've hit the limit of ${MAX_POSITIONS_PER_USER} open positions.</p><p>Close some before opening new ones.</p>`,
     );
   }
 
   const hourlyTradeCount = getUserTradeCount(
     user.telegram_id,
-    Date.now() - 60 * 60 * 1000
+    Date.now() - 60 * 60 * 1000,
   );
   if (hourlyTradeCount >= MAX_TRADES_PER_HOUR) {
-    return ctx.reply(
-      `⚠️ You've hit the limit of ${MAX_TRADES_PER_HOUR} trades this hour.\n\nTry again a bit later.`
+    return replyRich(
+      ctx,
+      `<h1>Rate Limit</h1><p>You've hit the limit of ${MAX_TRADES_PER_HOUR} trades this hour.</p><p>Try again a bit later.</p>`,
     );
   }
 
   if (availableAssets.length === 0) {
-    return ctx.reply("No active markets right now. Check back shortly.");
+    return replyRich(
+      ctx,
+      `<h1>No Markets</h1><p>No active markets right now. Check back shortly.</p>`,
+    );
   }
 
   // If no args, initiate the interactive range trade builder menu
@@ -1166,12 +1330,13 @@ export async function rangeCommand(ctx: Context) {
       isUp: true,
       isRange: true,
     };
-    return ctx.reply(
-      `📊 <b>New range trade</b>\n` +
-      `Tap through the menu, or type it directly:\n` +
-      `<code>/range [asset] [low] [high] [minutes] [amount]</code>\n\n` +
-      `<b>Pick an asset:</b>`,
-      { reply_markup: tradeBuilderAssetMenu }
+    return replyRich(
+      ctx,
+      `<h1>New Range Trade</h1>` +
+        `<p>Tap through the menu, or type it directly:</p>` +
+        `<p><code>/range [asset] [low] [high] [minutes] [amount]</code></p>` +
+        `<h2>Pick an asset:</h2>`,
+      { reply_markup: tradeBuilderAssetMenu },
     );
   }
 
@@ -1181,12 +1346,17 @@ export async function rangeCommand(ctx: Context) {
   let minutes: number;
   let amount: number;
 
-  if (availableAssets.length === 1 && !availableAssets.includes(args[0]?.toUpperCase())) {
+  if (
+    availableAssets.length === 1 &&
+    !availableAssets.includes(args[0]?.toUpperCase())
+  ) {
     asset = availableAssets[0];
     if (args.length < 4) {
-      return ctx.reply(
-        `Usage: <code>/range &lt;low&gt; &lt;high&gt; &lt;minutes&gt; &lt;amount&gt;</code>\n\n` +
-          `Example: <code>/range 70000 72000 15 100</code>`
+      return replyRich(
+        ctx,
+        `<h1>Usage</h1>` +
+          `<p><code>/range &lt;low&gt; &lt;high&gt; &lt;minutes&gt; &lt;amount&gt;</code></p>` +
+          `<p>Example: <code>/range 70000 72000 15 100</code></p>`,
       );
     }
     lowerStrike = parseFloat(args[0]);
@@ -1196,10 +1366,12 @@ export async function rangeCommand(ctx: Context) {
   } else {
     if (args.length < 5) {
       const exampleAsset = getExampleAsset(availableAssets);
-      return ctx.reply(
-        `Usage: <code>/range &lt;asset&gt; &lt;low&gt; &lt;high&gt; &lt;minutes&gt; &lt;amount&gt;</code>\n\n` +
-          `Example: <code>/range ${exampleAsset} 70000 72000 15 100</code>\n\n` +
-          `Assets: ${availableAssets.join(", ")}`
+      return replyRich(
+        ctx,
+        `<h1>Usage</h1>` +
+          `<p><code>/range &lt;asset&gt; &lt;low&gt; &lt;high&gt; &lt;minutes&gt; &lt;amount&gt;</code></p>` +
+          `<p>Example: <code>/range ${exampleAsset} 70000 72000 15 100</code></p>` +
+          `<p>Assets: ${availableAssets.join(", ")}</p>`,
       );
     }
     asset = args[0].toUpperCase();
@@ -1210,40 +1382,58 @@ export async function rangeCommand(ctx: Context) {
   }
 
   if (!availableAssets.includes(asset)) {
-    return ctx.reply(
-      `${asset} isn't available right now.\n\nAssets: ${availableAssets.join(", ")}`
+    return replyRich(
+      ctx,
+      `<h1>Asset Unavailable</h1><p>${asset} isn't available right now.</p><p>Assets: ${availableAssets.join(", ")}</p>`,
     );
   }
 
   if (isNaN(lowerStrike) || lowerStrike < 1000 || lowerStrike > 999999) {
-    return ctx.reply("Lower strike must be between 1,000 and 999,999.");
+    return replyRich(
+      ctx,
+      `<p>Lower strike must be between 1,000 and 999,999.</p>`,
+    );
   }
 
   if (isNaN(upperStrike) || upperStrike < 1000 || upperStrike > 999999) {
-    return ctx.reply("Upper strike must be between 1,000 and 999,999.");
+    return replyRich(
+      ctx,
+      `<p>Upper strike must be between 1,000 and 999,999.</p>`,
+    );
   }
 
   if (lowerStrike >= upperStrike) {
-    return ctx.reply("The lower strike must be below the upper strike.");
+    return replyRich(
+      ctx,
+      `<p>The lower strike must be below the upper strike.</p>`,
+    );
   }
 
   if (isNaN(minutes) || minutes < 5 || minutes > 60) {
-    return ctx.reply("Duration must be between 5 and 60 minutes.");
+    return replyRich(ctx, `<p>Duration must be between 5 and 60 minutes.</p>`);
   }
 
   if (isNaN(amount) || amount < 1 || amount > 10000) {
-    return ctx.reply("Amount must be between 1 and 10,000 dUSDC.");
+    return replyRich(ctx, `<p>Amount must be between 1 and 10,000 dUSDC.</p>`);
   }
 
   const oracle = await findNearestOracle(asset, minutes);
   if (!oracle) {
-    return ctx.reply(`No active market for ${asset} right now.`);
+    return replyRich(
+      ctx,
+      `<h1>No Market</h1><p>No active market for ${asset} right now.</p>`,
+    );
   }
 
-  if (!isStrikeOnOracleGrid(lowerStrike, oracle) || !isStrikeOnOracleGrid(upperStrike, oracle)) {
-    return ctx.reply(
-      `Those strikes aren't on ${asset}'s price grid.\n\n` +
-        `Valid strikes: <code>${formatGridHint(oracle)}</code>`
+  if (
+    !isStrikeOnOracleGrid(lowerStrike, oracle) ||
+    !isStrikeOnOracleGrid(upperStrike, oracle)
+  ) {
+    return replyRich(
+      ctx,
+      `<h1>Invalid Strikes</h1>` +
+        `<p>Those strikes aren't on ${asset}'s price grid.</p>` +
+        `<p>Valid strikes: <code>${formatGridHint(oracle)}</code></p>`,
     );
   }
 
@@ -1253,10 +1443,7 @@ export async function rangeCommand(ctx: Context) {
   // Pre-trade exposure risk check
   const riskCheck = await checkVaultExposure(notionalDusdc);
   if (!riskCheck.allowed) {
-    return ctx.reply(
-      `⚠️ <b>Trade blocked</b>\n\n` +
-      `${riskCheck.reason}`
-    );
+    return replyRich(ctx, `<h1>Trade Blocked</h1><p>${riskCheck.reason}</p>`);
   }
   const onchainQuote = await quoteRangeTradeOnchain({
     oracle,
@@ -1268,26 +1455,27 @@ export async function rangeCommand(ctx: Context) {
     ? previewFromOnchainAmounts(
         onchainQuote.mintCostDusdc,
         notionalDusdc,
-        onchainQuote.redeemPayoutDusdc
+        onchainQuote.redeemPayoutDusdc,
       )
     : calculateRangePremiumFromOracle(
         lowerStrike,
         upperStrike,
         oracle,
         actualMinutes,
-        notionalDusdc
+        notionalDusdc,
       );
 
   const feeBase = computeTradeFee(pricing.premium_dusdc);
   if (user.dusdc_balance < pricing.premium_dusdc + Number(feeBase)) {
     const maxAffordable = Math.floor(
-      (user.dusdc_balance / pricing.implied_prob) / 1_000_000
+      user.dusdc_balance / pricing.implied_prob / 1_000_000,
     );
-    return ctx.reply(
-      `<b>Not enough dUSDC</b>\n\n` +
-        `You have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>; this range needs <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>.\n\n` +
-        `Biggest size you can afford: ~${maxAffordable} dUSDC.\n` +
-        `Try: <code>/range ${asset} ${lowerStrike} ${upperStrike} ${actualMinutes} ${maxAffordable}</code>`
+    return replyRich(
+      ctx,
+      `<h1>Not Enough dUSDC</h1>` +
+        `<p>You have <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>; this range needs <code>${formatDusdc(pricing.premium_dusdc)} dUSDC</code>.</p>` +
+        `<p>Biggest size you can afford: ~${maxAffordable} dUSDC.</p>` +
+        `<p>Try: <code>/range ${asset} ${lowerStrike} ${upperStrike} ${actualMinutes} ${maxAffordable}</code></p>`,
     );
   }
 
@@ -1310,7 +1498,8 @@ export async function rangeCommand(ctx: Context) {
   };
   pendingTrades.set(tradeKey, trade);
 
-  const priceDiffPct = ((oracle.current_price - lowerStrike) / lowerStrike) * 100;
+  const priceDiffPct =
+    ((oracle.current_price - lowerStrike) / lowerStrike) * 100;
   const aiContext = await generateTradeAIContext({
     assetSymbol: asset,
     currentPrice: oracle.current_price,
@@ -1322,7 +1511,10 @@ export async function rangeCommand(ctx: Context) {
     lowerStrike,
     upperStrike,
   });
-  const feeLine = feeBase > 0n ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n` : "";
+  const feeLine =
+    feeBase > 0n
+      ? `• Fee: <code>${formatDusdc(Number(feeBase))} dUSDC</code>\n`
+      : "";
   const preview =
     `<b>Review trade</b>\n\n` +
     `↔ ${formatTradeLabel(trade)}\n` +
@@ -1338,7 +1530,7 @@ export async function rangeCommand(ctx: Context) {
     .text("✓ Confirm", `confirm_trade_${tradeKey}`)
     .text("✗ Cancel", `cancel_trade_${tradeKey}`);
 
-  return ctx.reply(preview, { reply_markup: keyboard });
+  return replyRich(ctx, preview, { reply_markup: keyboard });
 }
 
 function formatTradeLabel(trade: PendingTrade): string {
@@ -1364,6 +1556,7 @@ function isPositionItm(position: Position, currentPrice: number): boolean {
     return currentPrice > lowerStrike && currentPrice <= upperStrike;
   }
 
-  return position.is_up ? currentPrice > position.strike : currentPrice < position.strike;
+  return position.is_up
+    ? currentPrice > position.strike
+    : currentPrice < position.strike;
 }
-

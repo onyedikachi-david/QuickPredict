@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>
+            QuickPredict — Trade prediction markets without leaving Telegram
+        </title>
+        <meta
+            name="description"
+            content="QuickPredict is a Telegram-native trading interface for DeepBook Predict on Sui. Open on-chain binary options from Telegram with a non-custodial wallet — no browser, no extensions."
+        />
+        <meta
+            property="og:title"
+            content="QuickPredict — Prediction markets in Telegram"
+        />
+        <meta
+            property="og:description"
+            content="One command to trade. Non-custodial by design. Built on DeepBook Predict on Sui."
+        />
+        <meta property="og:type" content="website" />
+        <link
+            rel="icon"
+            href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E"
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <!-- SVG Icon Sprite (hidden) -->
+        <svg xmlns="http://www.w3.org/2000/svg" style="display: none">
+            <symbol
+                id="ic-zap"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </symbol>
+            <symbol
+                id="ic-shield"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <polyline points="9 12 11 14 15 10" />
+            </symbol>
+            <symbol
+                id="ic-timer"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <circle cx="12" cy="13" r="8" />
+                <path d="M12 9v4l2 2" />
+                <path d="M5 3L2 6" />
+                <path d="M22 6l-3-3" />
+                <path d="M12 2v2" />
+            </symbol>
+            <symbol
+                id="ic-chart"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <line x1="18" y1="20" x2="18" y2="10" />
+                <line x1="12" y1="20" x2="12" y2="4" />
+                <line x1="6" y1="20" x2="6" y2="14" />
+            </symbol>
+            <symbol
+                id="ic-cpu"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+                <rect x="9" y="9" width="6" height="6" />
+                <path
+                    d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"
+                />
+            </symbol>
+            <symbol
+                id="ic-users"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </symbol>
+            <symbol
+                id="ic-trophy"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+                <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+                <path d="M4 22h16" />
+                <path
+                    d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"
+                />
+                <path
+                    d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"
+                />
+                <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+            </symbol>
+            <symbol
+                id="ic-lock"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <rect width="18" height="11" x="3" y="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </symbol>
+            <symbol
+                id="ic-key"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <circle cx="7.5" cy="15.5" r="5.5" />
+                <path d="m21 2-9.3 9.3" />
+                <path d="m18 5 3-3" />
+                <path d="m15 8 3-3" />
+            </symbol>
+            <symbol
+                id="ic-memory"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M6 19v-3" />
+                <path d="M10 19v-3" />
+                <path d="M14 19v-3" />
+                <path d="M18 19v-3" />
+                <path d="M8 11V9" />
+                <path d="M16 11V9" />
+                <path d="M12 11V9" />
+                <path d="M2 15h20" />
+                <path
+                    d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v1.1a2 2 0 0 0 0 3.837V15H2v-3.063a2 2 0 0 0 0-3.837Z"
+                />
+            </symbol>
+            <symbol
+                id="ic-eraser"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path
+                    d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"
+                />
+                <path d="M22 21H7" />
+                <path d="m5 11 9 9" />
+            </symbol>
+            <symbol
+                id="ic-eye"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+            </symbol>
+            <symbol
+                id="ic-link"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path
+                    d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+                />
+                <path
+                    d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+                />
+            </symbol>
+            <symbol
+                id="ic-trending"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+                <polyline points="16 7 22 7 22 13" />
+            </symbol>
+            <symbol
+                id="ic-arrow-up-right"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M7 17L17 7" />
+                <path d="M7 7h10v10" />
+            </symbol>
+        </svg>
+
+        <header class="nav">
+            <div class="container nav-inner">
+                <a class="brand" href="#top">
+                    <span class="brand-icon"
+                        ><svg width="18" height="18"><use href="#ic-zap" /></svg
+                    ></span>
+                    <span class="brand-name">QuickPredict</span>
+                </a>
+                <nav class="nav-links" id="primary-nav" aria-label="Primary">
+                    <a href="#features">Features</a>
+                    <a href="#how">How it works</a>
+                    <a href="#commands">Commands</a>
+                    <a href="#security">Security</a>
+                </nav>
+                <div class="nav-actions">
+                    <a
+                        class="btn btn-outline"
+                        href="https://github.com/onyedikachi/QuickPredict"
+                        target="_blank"
+                        rel="noopener"
+                        >GitHub</a
+                    >
+                    <a
+                        class="btn btn-solid nav-cta"
+                        href="https://t.me/QuickPredictBot"
+                        target="_blank"
+                        rel="noopener"
+                        >Open in Telegram</a
+                    >
+                    <button
+                        class="nav-toggle"
+                        aria-label="Toggle menu"
+                        aria-controls="primary-nav"
+                        aria-expanded="false"
+                    >
+                        <span></span><span></span><span></span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main id="top">
+            <!-- HERO -->
+            <section class="hero">
+                <div class="container hero-grid">
+                    <div class="hero-copy">
+                        <div class="badge">
+                            <span class="badge-dot"></span>
+                            <span>Live on Sui Testnet</span>
+                        </div>
+                        <h1>
+                            Trade prediction markets<br /><em
+                                >without leaving Telegram.</em
+                            >
+                        </h1>
+                        <p class="lede">
+                            One command becomes a live on-chain binary option in
+                            seconds. Non-custodial wallets, options-accurate
+                            pricing, and automated settlement checks — built on
+                            DeepBook Predict.
+                        </p>
+                        <div class="hero-ctas">
+                            <a
+                                class="btn btn-solid btn-lg"
+                                href="https://t.me/QuickPredictBot"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                Open in Telegram
+                                <svg width="16" height="16">
+                                    <use href="#ic-arrow-up-right" />
+                                </svg>
+                            </a>
+                            <a class="btn btn-outline btn-lg" href="#how"
+                                >How it works</a
+                            >
+                        </div>
+                    </div>
+
+                    <!-- Mock Telegram chat -->
+                    <div class="hero-visual">
+                        <div class="phone">
+                            <div class="phone-bar">
+                                <div class="phone-avatar">
+                                    <svg width="16" height="16">
+                                        <use href="#ic-zap" />
+                                    </svg>
+                                </div>
+                                <div class="phone-meta">
+                                    <span class="phone-title"
+                                        >QuickPredict</span
+                                    >
+                                    <span class="phone-sub">bot · online</span>
+                                </div>
+                            </div>
+                            <div class="phone-chat" id="demo-chat">
+                                <!-- Messages injected by JS -->
+                            </div>
+                        </div>
+                        <div class="phone-decoration"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TICKER STRIP -->
+            <section class="ticker">
+                <div class="container">
+                    <div class="ticker-inner">
+                        <span class="ticker-item"
+                            ><svg width="14" height="14">
+                                <use href="#ic-key" />
+                            </svg>
+                            Non-custodial</span
+                        >
+                        <span class="ticker-sep"></span>
+                        <span class="ticker-item"
+                            ><svg width="14" height="14">
+                                <use href="#ic-zap" />
+                            </svg>
+                            Automated settlement</span
+                        >
+                        <span class="ticker-sep"></span>
+                        <span class="ticker-item"
+                            ><svg width="14" height="14">
+                                <use href="#ic-trending" />
+                            </svg>
+                            Real implied probability</span
+                        >
+                        <span class="ticker-sep"></span>
+                        <span class="ticker-item"
+                            ><svg width="14" height="14">
+                                <use href="#ic-link" />
+                            </svg>
+                            On-chain on Sui</span
+                        >
+                        <span class="ticker-sep"></span>
+                        <span class="ticker-item"
+                            ><svg width="14" height="14">
+                                <use href="#ic-cpu" />
+                            </svg>
+                            Auto-settlement keeper</span
+                        >
+                    </div>
+                </div>
+            </section>
+
+            <!-- PROBLEM -->
+            <section class="problem">
+                <div class="container">
+                    <blockquote>
+                        <p>
+                            DeepBook Predict is the fastest on-chain options
+                            protocol on Sui — but it has no consumer UI.
+                        </p>
+                        <p>
+                            The jump from <em>"I think BTC goes up"</em> to a
+                            live position shouldn't need a wallet extension,
+                            testnet tokens, and a browser.
+                        </p>
+                    </blockquote>
+                </div>
+            </section>
+
+            <!-- FEATURES -->
+            <section id="features" class="features">
+                <div class="container">
+                    <div class="section-header">
+                        <span class="section-tag">Features</span>
+                        <h2>
+                            Everything you need to trade,<br /><em
+                                >in one chat.</em
+                            >
+                        </h2>
+                    </div>
+                    <div class="features-grid">
+                        <article class="feature-card">
+                            <div class="feature-icon">
+                                <svg width="22" height="22">
+                                    <use href="#ic-shield" />
+                                </svg>
+                            </div>
+                            <h3>Non-custodial wallets</h3>
+                            <p>
+                                Generate a Sui keypair with
+                                <code>/wallet create</code>. Encrypted with
+                                AES-256-GCM via PBKDF2 (310k iterations). The
+                                server never holds your funds.
+                            </p>
+                        </article>
+                        <article class="feature-card">
+                            <div class="feature-icon">
+                                <svg width="22" height="22">
+                                    <use href="#ic-zap" />
+                                </svg>
+                            </div>
+                            <h3>Sub-5s on-chain trades</h3>
+                            <p>
+                                Pre-built transaction blocks and gas-sponsored
+                                onboarding. Tap <em>Confirm</em> and your
+                                position lands on Sui in seconds.
+                            </p>
+                        </article>
+                        <article class="feature-card">
+                            <div class="feature-icon">
+                                <svg width="22" height="22">
+                                    <use href="#ic-chart" />
+                                </svg>
+                            </div>
+                            <h3>Options-accurate pricing</h3>
+                            <p>
+                                Every preview shows premium, max payout, net
+                                profit, and implied probability — parsed from
+                                live SVI parameters.
+                            </p>
+                        </article>
+                        <article class="feature-card">
+                            <div class="feature-icon">
+                                <svg width="22" height="22">
+                                    <use href="#ic-cpu" />
+                                </svg>
+                            </div>
+                            <h3>Settlement keeper</h3>
+                            <p>
+                                A 20-second keeper checks expired positions,
+                                waits for settled oracles, and calls
+                                <code>redeem_permissionless</code> for winning
+                                binaries. DM on win.
+                            </p>
+                        </article>
+                        <article class="feature-card">
+                            <div class="feature-icon">
+                                <svg width="22" height="22">
+                                    <use href="#ic-users" />
+                                </svg>
+                            </div>
+                            <h3>Copy trading</h3>
+                            <p>
+                                Mirror another trader's next position with
+                                <code>/copy @user</code>. Each copy tracked
+                                independently in your own PnL.
+                            </p>
+                        </article>
+                        <article class="feature-card">
+                            <div class="feature-icon">
+                                <svg width="22" height="22">
+                                    <use href="#ic-trophy" />
+                                </svg>
+                            </div>
+                            <h3>Group tournaments</h3>
+                            <p>
+                                Timed competitions in any group with
+                                <code>/tournament start</code>. Live scoring,
+                                winner announced at expiry.
+                            </p>
+                        </article>
+                    </div>
+                </div>
+            </section>
+
+            <!-- HOW IT WORKS -->
+            <section id="how" class="how">
+                <div class="container">
+                    <div class="section-header">
+                        <span class="section-tag">Process</span>
+                        <h2>
+                            Zero to live position.<br /><em>Three commands.</em>
+                        </h2>
+                    </div>
+                    <div class="steps">
+                        <div class="step">
+                            <div class="step-marker">
+                                <span class="step-num">1</span>
+                                <div class="step-line"></div>
+                            </div>
+                            <div class="step-content">
+                                <h3>Create your wallet</h3>
+                                <div class="step-code">
+                                    <code>/wallet create mypassword</code>
+                                </div>
+                                <p>
+                                    A new Sui keypair is generated, encrypted
+                                    with your password, and stored locally. You
+                                    get a <code>0x…</code> address and
+                                    onboarding testnet credits — 0.1 SUI for gas
+                                    and 1,000 dUSDC to trade.
+                                </p>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div class="step-marker">
+                                <span class="step-num">2</span>
+                                <div class="step-line"></div>
+                            </div>
+                            <div class="step-content">
+                                <h3>Pick a market</h3>
+                                <div class="step-code">
+                                    <code>/markets</code>
+                                </div>
+                                <p>
+                                    Browse every active oracle — BTC, ETH, SOL —
+                                    whatever the registry returns. Live price,
+                                    expiry countdown, and one-tap
+                                    <code>/up</code> /
+                                    <code>/down</code> shortcuts.
+                                </p>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div class="step-marker">
+                                <span class="step-num">3</span>
+                            </div>
+                            <div class="step-content">
+                                <h3>Place the trade</h3>
+                                <div class="step-code">
+                                    <code>/up BTC 71000 10 100</code>
+                                </div>
+                                <p>
+                                    Review the premium, tap Confirm, type your
+                                    password once (deleted from chat instantly),
+                                    and your position is live on-chain.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- COMMANDS -->
+            <section id="commands" class="commands">
+                <div class="container">
+                    <div class="section-header">
+                        <span class="section-tag">Reference</span>
+                        <h2>The full command set.</h2>
+                        <p class="section-desc">
+                            Every command works in DMs and groups. Tap any row
+                            to copy.
+                        </p>
+                    </div>
+
+                    <div class="cmd-grid">
+                        <div class="cmd-block">
+                            <h3>Wallet & custody</h3>
+                            <div class="cmd-list">
+                                <div class="cmd" data-copy="/wallet create">
+                                    <div class="cmd-name">
+                                        <code>/wallet create</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Initialize encrypted Sui keypair
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/wallet">
+                                    <div class="cmd-name">
+                                        <code>/wallet</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Status and sub-commands
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/wallet balance">
+                                    <div class="cmd-name">
+                                        <code>/wallet balance</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Real-time SUI + dUSDC balances
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/wallet address">
+                                    <div class="cmd-name">
+                                        <code>/wallet address</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Show your deposit address
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cmd-block">
+                            <h3>Trading</h3>
+                            <div class="cmd-list">
+                                <div class="cmd" data-copy="/markets">
+                                    <div class="cmd-name">
+                                        <code>/markets</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Browse active oracles
+                                    </div>
+                                </div>
+                                <div
+                                    class="cmd"
+                                    data-copy="/up BTC 71000 10 100"
+                                >
+                                    <div class="cmd-name"><code>/up</code></div>
+                                    <div class="cmd-desc">
+                                        Long binary — above strike
+                                    </div>
+                                </div>
+                                <div
+                                    class="cmd"
+                                    data-copy="/down BTC 70000 15 50"
+                                >
+                                    <div class="cmd-name">
+                                        <code>/down</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Short binary — below strike
+                                    </div>
+                                </div>
+                                <div
+                                    class="cmd"
+                                    data-copy="/range BTC 70000 72000 15 100"
+                                >
+                                    <div class="cmd-name">
+                                        <code>/range</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Range option — inside band
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/status">
+                                    <div class="cmd-name">
+                                        <code>/status</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Open positions + ITM/OTM
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/balance">
+                                    <div class="cmd-name">
+                                        <code>/balance</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Balance and recent activity
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/account">
+                                    <div class="cmd-name">
+                                        <code>/account</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Full account overview
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cmd-block">
+                            <h3>Money movement</h3>
+                            <div class="cmd-list">
+                                <div class="cmd" data-copy="/swap">
+                                    <div class="cmd-name">
+                                        <code>/swap</code>
+                                    </div>
+                                    <div class="cmd-desc">Swap SUI ⇄ dUSDC</div>
+                                </div>
+                                <div class="cmd" data-copy="/claim">
+                                    <div class="cmd-name">
+                                        <code>/claim</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Claim settled winnings
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/withdraw">
+                                    <div class="cmd-name">
+                                        <code>/withdraw</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Send to external address
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cmd-block">
+                            <h3>Social</h3>
+                            <div class="cmd-list">
+                                <div class="cmd" data-copy="/leaderboard">
+                                    <div class="cmd-name">
+                                        <code>/leaderboard</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Top 10 by net PnL
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/copy @user">
+                                    <div class="cmd-name">
+                                        <code>/copy @user</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Mirror next position 1:1
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/uncopy">
+                                    <div class="cmd-name">
+                                        <code>/uncopy</code>
+                                    </div>
+                                    <div class="cmd-desc">Stop copying</div>
+                                </div>
+                                <div
+                                    class="cmd"
+                                    data-copy="/tournament start 30"
+                                >
+                                    <div class="cmd-name">
+                                        <code>/tournament</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Group competition
+                                    </div>
+                                </div>
+                                <div class="cmd" data-copy="/share">
+                                    <div class="cmd-name">
+                                        <code>/share</code>
+                                    </div>
+                                    <div class="cmd-desc">
+                                        Forwardable trade card
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECURITY -->
+            <section id="security" class="security">
+                <div class="container">
+                    <div class="section-header">
+                        <span class="section-tag">Security</span>
+                        <h2>Your keys. Your funds.<br /><em>Always.</em></h2>
+                    </div>
+                    <div class="security-layout">
+                        <div class="security-main">
+                            <div class="sec-row">
+                                <div class="sec-icon">
+                                    <svg width="20" height="20">
+                                        <use href="#ic-lock" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <strong>AES-256-GCM encryption</strong>
+                                    <p>
+                                        Private keys encrypted before touching
+                                        the database.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="sec-row">
+                                <div class="sec-icon">
+                                    <svg width="20" height="20">
+                                        <use href="#ic-key" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <strong>PBKDF2 · 310,000 iterations</strong>
+                                    <p>
+                                        Per-user random salt. 12-byte IV.
+                                        Brute-force resistant.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="sec-row">
+                                <div class="sec-icon">
+                                    <svg width="20" height="20">
+                                        <use href="#ic-memory" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <strong>Short-lived signing</strong>
+                                    <p>
+                                        The key is decrypted only after the user
+                                        provides a password for that action. The
+                                        encrypted key remains at rest in SQLite.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="sec-row">
+                                <div class="sec-icon">
+                                    <svg width="20" height="20">
+                                        <use href="#ic-eraser" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <strong>Instant chat erasure</strong>
+                                    <p>
+                                        Password replies deleted from Telegram
+                                        via
+                                        <code>deleteMessage</code> immediately.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="sec-row">
+                                <div class="sec-icon">
+                                    <svg width="20" height="20">
+                                        <use href="#ic-eye" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <strong>On-chain transparency</strong>
+                                    <p>
+                                        Your own <code>PredictManager</code>.
+                                        Verify on any Sui explorer. Export your
+                                        key anytime.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <aside class="security-sidebar">
+                            <div class="sidebar-card">
+                                <h4>Pre-trade risk guard</h4>
+                                <p>
+                                    Bot checks Predict registry and vault
+                                    utilisation before every mint.
+                                </p>
+                            </div>
+                            <div class="sidebar-card">
+                                <h4>Rate limits</h4>
+                                <ul>
+                                    <li>10 open positions / user</li>
+                                    <li>10 trades / hour</li>
+                                    <li>3 requests / second / user</li>
+                                    <li>3 copy leaders max</li>
+                                </ul>
+                            </div>
+                        </aside>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CTA -->
+            <section class="final-cta">
+                <div class="container">
+                    <div class="cta-box">
+                        <h2>Ready to trade?</h2>
+                        <p>
+                            Open the bot. Run <code>/wallet create</code>.
+                            You're trading in under a minute.
+                        </p>
+                        <a
+                            class="btn btn-solid btn-lg"
+                            href="https://t.me/QuickPredictBot"
+                            target="_blank"
+                            rel="noopener"
+                        >
+                            Open QuickPredict
+                            <svg width="16" height="16">
+                                <use href="#ic-arrow-up-right" />
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <div class="container footer-inner">
+                <div class="footer-left">
+                    <div class="footer-brand">
+                        <span class="brand-icon"
+                            ><svg width="16" height="16">
+                                <use href="#ic-zap" /></svg
+                        ></span>
+                        <span>QuickPredict</span>
+                    </div>
+                    <p>Telegram-native trading for DeepBook Predict on Sui.</p>
+                </div>
+                <div class="footer-right">
+                    <a
+                        href="https://github.com/onyedikachi/QuickPredict"
+                        target="_blank"
+                        rel="noopener"
+                        >GitHub</a
+                    >
+                    <a
+                        href="https://github.com/onyedikachi/QuickPredict/blob/main/docs/prd.md"
+                        target="_blank"
+                        rel="noopener"
+                        >PRD</a
+                    >
+                    <a
+                        href="https://github.com/onyedikachi/QuickPredict/blob/main/DEPLOY.md"
+                        target="_blank"
+                        rel="noopener"
+                        >Deploy</a
+                    >
+                    <a
+                        href="https://t.me/QuickPredictBot"
+                        target="_blank"
+                        rel="noopener"
+                        >Telegram</a
+                    >
+                </div>
+            </div>
+            <div class="container">
+                <div class="footer-bottom">
+                    <span
+                        >Testnet · Non-custodial · MIT License · Not financial
+                        advice</span
+                    >
+                </div>
+            </div>
+        </footer>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+        <script src="script.js"></script>
+    </body>
+</html>

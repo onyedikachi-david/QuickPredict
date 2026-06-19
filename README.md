@@ -44,9 +44,9 @@ on-chain.
   SQLite. Password prompts use Telegram ForceReply and are deleted instantly.
 - **Onboarding Faucet Bridge** — New wallets receive 0.1 SUI (gas) and 1,000
   dUSDC (collateral) upon creation, funded from the testnet treasury.
-- **WebSocket Event Streaming Keeper** — Subscribes to `oracle::OracleSettled`
-  events and executes `redeem_permissionless` instantly on oracle updates, with
-  active polling as fallback.
+- **Polling Settlement Keeper** — Checks expired positions every 20 seconds,
+  waits for settled oracle data, and attempts permissionless redemption for
+  winning binary positions.
 - **Pre-Trade Risk Control Guard** — Active checks against Predict registry and
   vault state prevent transactions exceeding exposure limits.
 - **DeepSeek AI Context Client** — Enriches trade preview cards with concise
@@ -58,7 +58,7 @@ on-chain.
 - [`src/common/`](./src/common) — shared config, context, i18n, error handling
 - [`src/db/`](./src/db) — Drizzle/SQLite database schema and migrations
 - [`src/helpers/`](./src/helpers) — logger and helper utilities
-- [`src/keeper/`](./src/keeper) — WebSocket-enabled settlement keeper
+- [`src/keeper/`](./src/keeper) — polling settlement keeper
 - [`src/middlewares/`](./src/middlewares) — session and logging middleware
 - [`src/modules/`](./src/modules) — Telegram bot commands, callbacks, dialogs
 - [`src/predict/`](./src/predict) — DeepBook Predict client APIs and risk queries

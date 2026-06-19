@@ -24,6 +24,7 @@ import {
 } from "../../sui/transactions";
 import { logger } from "../../helpers/logger";
 import { getDatabase } from "../../db/schema";
+import { replyRich } from "../../helpers/rich-message";
 
 export async function swapConversation(
   conversation: MyConversation,
@@ -34,7 +35,7 @@ export async function swapConversation(
   // DB read before the wait → wrap in external so replays reuse the cached value.
   const address = await conversation.external(() => getUserWalletAddress(telegramId));
   if (!address) {
-    await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
+    await replyRich(ctx, `<h1>No Wallet</h1><p>Create one with <code>/wallet create your-password</code>.</p>`);
     return;
   }
 
@@ -45,10 +46,10 @@ export async function swapConversation(
     .row()
     .text("✗ Cancel", "swap_cancel");
 
-  const dirPrompt = await ctx.reply(
-    `🔄 <b>Swap</b>\n\n` +
-      `Pick a direction.`,
-    { parse_mode: "HTML", reply_markup: directionKeyboard },
+  const dirPrompt = await replyRich(
+    ctx,
+    `<h1>Swap</h1><p>Pick a direction.</p>`,
+    { reply_markup: directionKeyboard },
   );
 
   const dirCallback = await conversation.waitForCallbackQuery([
@@ -65,7 +66,7 @@ export async function swapConversation(
         dirPrompt.message_id,
       );
     } catch (e) {}
-    await dirCallback.reply("Swap cancelled.");
+    await replyRich(dirCallback, `<p>Swap cancelled.</p>`);
     return;
   }
 
@@ -99,11 +100,11 @@ export async function swapConversation(
   const availableBalanceRaw = isSuiToDusdc ? rawSuiBalance : rawDusdcBalance;
 
   // 2. Ask for amount
-  const amountPrompt = await ctx.reply(
-    `🔄 <b>Swap ${fromToken} → ${toToken}</b>\n\n` +
-      `Available <code>${availableBalanceStr} ${fromToken}</code>\n\n` +
-      `Reply with the amount of ${fromToken} to swap, or type <code>cancel</code>.`,
-    { parse_mode: "HTML" },
+  const amountPrompt = await replyRich(
+    ctx,
+    `<h1>Swap ${fromToken} to ${toToken}</h1>` +
+      `<p>Available <code>${availableBalanceStr} ${fromToken}</code></p>` +
+      `<p>Reply with the amount of ${fromToken} to swap, or type <code>cancel</code>.</p>`,
   );
 
   let amountStr = "";
@@ -113,12 +114,13 @@ export async function swapConversation(
     const amountCtx = await conversation.waitFor("message:text");
     const val = amountCtx.message.text.trim();
     if (val.toLowerCase() === "cancel" || val === "/cancel") {
-      await amountCtx.reply("Swap cancelled.");
+      await replyRich(amountCtx, `<p>Swap cancelled.</p>`);
       return;
     }
     if (val.startsWith("/")) {
-      await amountCtx.reply(
-        "Swap cancelled. Run the command again when ready.",
+      await replyRich(
+        amountCtx,
+        `<p>Swap cancelled. Run the command again when ready.</p>`,
       );
       return;
     }
@@ -131,29 +133,29 @@ export async function swapConversation(
         if (amountBase <= availableBalanceRaw) {
           // If SUI -> dUSDC, ensure we leave at least 0.2 SUI for gas fees
           if (isSuiToDusdc && availableBalanceRaw - amountBase < 200_000_000n) {
-            await amountCtx.reply(
-              `⚠️ Keep at least <code>0.2 SUI</code> for gas. ` +
-                `You can swap up to <code>${formatCoinAmount(availableBalanceRaw - 200_000_000n, 9)} SUI</code>. ` +
-                `Enter a lower amount.`,
+            await replyRich(
+              amountCtx,
+              `<h1>Keep Gas Available</h1>` +
+                `<p>Keep at least <code>0.2 SUI</code> for gas. You can swap up to <code>${formatCoinAmount(availableBalanceRaw - 200_000_000n, 9)} SUI</code>.</p>` +
+                `<p>Enter a lower amount.</p>`,
             );
             continue;
           }
           amountStr = val;
           break;
         } else {
-          await amountCtx.reply(
-            `Not enough ${fromToken} — you have <code>${availableBalanceStr} ${fromToken}</code>. ` +
-              `Enter a lower amount.`,
+          await replyRich(
+            amountCtx,
+            `<h1>Not Enough ${fromToken}</h1><p>You have <code>${availableBalanceStr} ${fromToken}</code>. Enter a lower amount.</p>`,
           );
         }
       } catch (e) {
-        await amountCtx.reply(
-          "That amount isn't valid. Enter a number.",
-        );
+        await replyRich(amountCtx, `<p>That amount isn't valid. Enter a number.</p>`);
       }
     } else {
-      await amountCtx.reply(
-        "That amount isn't valid. Enter a positive number.",
+      await replyRich(
+        amountCtx,
+        `<p>That amount isn't valid. Enter a positive number.</p>`,
       );
     }
   }
@@ -164,10 +166,7 @@ export async function swapConversation(
   } catch (e) {}
 
   // 3. Simulate Swap to show estimate and rate
-  const simMsg = await ctx.reply(
-    "⏳ <i>Estimating swap output…</i>",
-    { parse_mode: "HTML" },
-  );
+  const simMsg = await replyRich(ctx, `<p><i>Estimating swap output...</i></p>`);
 
   const cfg = getNetworkConfig();
   const network = cfg.network;
@@ -207,16 +206,18 @@ export async function swapConversation(
   // 4. Request Password to execute
   const rateInfo =
     simulatedOut > 0
-      ? `• Estimated out <code>${simulatedOut.toFixed(4)} ${toToken}</code>\n` +
-        `• Rate <code>1 ${fromToken} ≈ ${(simulatedOut / parseFloat(amountStr)).toFixed(4)} ${toToken}</code>\n\n`
-      : `⚠️ Couldn't estimate output — the swap will run without slippage protection.\n\n`;
+      ? `<ul>` +
+        `<li>Estimated out <code>${simulatedOut.toFixed(4)} ${toToken}</code></li>` +
+        `<li>Rate <code>1 ${fromToken} ≈ ${(simulatedOut / parseFloat(amountStr)).toFixed(4)} ${toToken}</code></li>` +
+        `</ul>`
+      : `<blockquote>Could not estimate output. The swap will run without slippage protection.</blockquote>`;
 
-  const passPrompt = await ctx.reply(
-    `🔑 <b>Enter your password to sign</b>\n\n` +
-      `Swap <code>${amountStr} ${fromToken}</code> → ${toToken}\n` +
+  const passPrompt = await replyRich(
+    ctx,
+    `<h1>Enter Password to Sign</h1>` +
+      `<p>Swap <code>${amountStr} ${fromToken}</code> to ${toToken}</p>` +
       rateInfo +
-      `<i>Your password message is deleted right after you send it.</i>`,
-    { parse_mode: "HTML" },
+      `<p><i>Your password message is deleted right after you send it.</i></p>`,
   );
 
   const passCtx = await conversation.waitFor("message:text");
@@ -236,14 +237,17 @@ export async function swapConversation(
     try {
       await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
     } catch (e) {}
-    await passCtx.reply("Swap cancelled.");
+    await replyRich(passCtx, `<p>Swap cancelled.</p>`);
     return;
   }
   if (password.startsWith("/")) {
     try {
       await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
     } catch (e) {}
-    await passCtx.reply("Swap cancelled. Run the command again when ready.");
+    await replyRich(
+      passCtx,
+      `<p>Swap cancelled. Run the command again when ready.</p>`,
+    );
     return;
   }
 
@@ -252,10 +256,7 @@ export async function swapConversation(
     await passCtx.api.deleteMessage(passCtx.chat.id, passPrompt.message_id);
   } catch (e) {}
 
-  const loadingMsg = await passCtx.reply(
-    `⏳ <i>Unlocking your wallet and preparing the swap…</i>`,
-    { parse_mode: "HTML" },
-  );
+  const loadingMsg = await replyRich(passCtx, `<p><i>Unlocking your wallet and preparing the swap...</i></p>`);
 
   try {
     const suiClient = getRpcClient();
@@ -346,18 +347,16 @@ export async function swapConversation(
       });
 
       const explorerLink = getExplorerTxLink(result.digest);
-      await passCtx.reply(
-        `✅ <b>Swap complete</b>\n\n` +
-          `Swapped <code>${amountStr} ${fromToken}</code> → ${toToken}\n` +
-          `Tx <a href="${explorerLink}">${result.digest.slice(0, 8)}…${result.digest.slice(-4)}</a>`,
-        { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+      await replyRich(
+        passCtx,
+        `<h1>Swap Complete</h1>` +
+          `<ul>` +
+          `<li>Swapped <code>${amountStr} ${fromToken}</code> to ${toToken}</li>` +
+          `<li>Tx <a href="${explorerLink}">${result.digest.slice(0, 8)}...${result.digest.slice(-4)}</a></li>` +
+          `</ul>`,
       );
     } else {
-      await passCtx.reply(
-        `❌ <b>Swap failed</b>\n\n` +
-          `<code>${result.error || "Unknown error"}</code>`,
-        { parse_mode: "HTML" },
-      );
+      await replyRich(passCtx, `<h1>Swap Failed</h1><pre>${result.error || "Unknown error"}</pre>`);
     }
   } catch (error) {
     try {
@@ -365,11 +364,7 @@ export async function swapConversation(
     } catch (e) {}
 
     logger.error({ error, telegramId }, "Swap execution crashed");
-    await passCtx.reply(
-      `❌ <b>Swap failed</b>\n\n` +
-        `<code>${error instanceof Error ? error.message : String(error)}</code>`,
-      { parse_mode: "HTML" },
-    );
+    await replyRich(passCtx, `<h1>Swap Failed</h1><pre>${error instanceof Error ? error.message : String(error)}</pre>`);
   }
 }
 
@@ -377,7 +372,7 @@ export async function swapCommand(ctx: Context) {
   if (!ctx.from) return;
   const address = getUserWalletAddress(ctx.from.id.toString());
   if (!address) {
-    await ctx.reply("Create a wallet first with <code>/wallet create your-password</code>.");
+    await replyRich(ctx, `<h1>No Wallet</h1><p>Create one with <code>/wallet create your-password</code>.</p>`);
     return;
   }
   await ctx.conversation.enter("swapConversation");

@@ -8,6 +8,7 @@ import {
 } from "../../db/copy";
 import { formatDusdc } from "../../predict/pricing";
 import { getDatabase, CopyFollow } from "../../db/schema";
+import { editRich } from "../../helpers/rich-message";
 
 const COPY_MAX_LEADERS = 3;
 
@@ -33,17 +34,18 @@ export async function generateLeaderboardMessage(ctx: Context) {
   const periodLabel = period === "weekly" ? "Weekly" : "All-time";
 
   if (leaders.length === 0) {
-    return `🏆 <b>Leaderboard</b> · ${periodLabel}\n\nNo data yet — be the first to trade.`;
+    return `<h1>Leaderboard</h1><p><b>${periodLabel}</b></p><p>No data yet. Be the first to trade.</p>`;
   }
 
-  let message = `🏆 <b>Leaderboard</b> · ${periodLabel}\n\n`;
+  let message = `<h1>Leaderboard</h1><p><b>${periodLabel}</b></p><ol>`;
 
   leaders.forEach((user, index) => {
     const username = user.username ? `@${user.username}` : "Anonymous";
     const pnl = `${user.total_pnl >= 0 ? "+" : ""}${formatDusdc(user.total_pnl)}`;
     const streak = user.streak > 2 ? ` · ${user.streak} streak` : "";
-    message += `${index + 1}. <b>${username}</b> · <code>${pnl} dUSDC</code> · <code>${user.win_count}W ${user.loss_count}L</code>${streak}\n`;
+    message += `<li><b>${username}</b> · <code>${pnl} dUSDC</code> · <code>${user.win_count}W ${user.loss_count}L</code>${streak}</li>`;
   });
+  message += `</ol>`;
 
   return message;
 }
@@ -58,7 +60,7 @@ export const leaderboardMenu = new Menu<Context>("leaderboard-main")
     async (ctx) => {
       ctx.session.leaderboardPeriod = "weekly";
       const text = await generateLeaderboardMessage(ctx);
-      await ctx.editMessageText(text);
+      await editRich(ctx, text);
     }
   )
   .text(
@@ -66,7 +68,7 @@ export const leaderboardMenu = new Menu<Context>("leaderboard-main")
     async (ctx) => {
       ctx.session.leaderboardPeriod = "alltime";
       const text = await generateLeaderboardMessage(ctx);
-      await ctx.editMessageText(text);
+      await editRich(ctx, text);
     }
   )
   .row()
@@ -110,19 +112,22 @@ export async function generateCopyboardMessage(ctx: Context) {
   // Determine current active ratio display (read from first follow or fallback to 1.0)
   const activeRatio = count > 0 ? follows[0].ratio : 1.0;
 
-  let message = `👥 <b>Copy trading</b>\n\n`;
-  message += `• Status <code>${statusLabel}</code>\n`;
-  message += `• Multiplier <code>${activeRatio}x</code>\n`;
-  message += `• Following <code>${count}</code> / ${COPY_MAX_LEADERS}\n\n`;
+  let message = `<h1>Copy Trading</h1>`;
+  message += `<ul>`;
+  message += `<li>Status <code>${statusLabel}</code></li>`;
+  message += `<li>Multiplier <code>${activeRatio}x</code></li>`;
+  message += `<li>Following <code>${count}</code> / ${COPY_MAX_LEADERS}</li>`;
+  message += `</ul>`;
 
   if (count === 0) {
-    message += `<i>Not copying anyone yet. Use /leaderboard to find traders to copy.</i>`;
+    message += `<p><i>Not copying anyone yet. Use /leaderboard to find traders to copy.</i></p>`;
   } else {
-    message += `<b>Following</b>\n`;
+    message += `<h2>Following</h2><ol>`;
     follows.forEach((f, idx) => {
       const username = f.username ? `@${f.username}` : `User ${f.leader_id}`;
-      message += `${idx + 1}. <b>${username}</b> · <code>${f.ratio}x</code>\n`;
+      message += `<li><b>${username}</b> · <code>${f.ratio}x</code></li>`;
     });
+    message += `</ol>`;
   }
 
   return message;
@@ -156,7 +161,7 @@ export const copyboardMenu = new Menu<Context>("copyboard-main")
       });
 
       const text = await generateCopyboardMessage(ctx);
-      await ctx.editMessageText(text);
+      await editRich(ctx, text);
     });
 
     range.row();
@@ -174,7 +179,7 @@ export const copyboardMenu = new Menu<Context>("copyboard-main")
 
         await ctx.answerCallbackQuery({ text: `Multiplier updated to ${m}x` });
         const text = await generateCopyboardMessage(ctx);
-        await ctx.editMessageText(text);
+        await editRich(ctx, text);
       });
     }
 
@@ -187,7 +192,7 @@ export const copyboardMenu = new Menu<Context>("copyboard-main")
         removeCopyFollow(followerId, f.leader_id);
         await ctx.answerCallbackQuery({ text: `Stopped copying ${username}` });
         const text = await generateCopyboardMessage(ctx);
-        await ctx.editMessageText(text);
+        await editRich(ctx, text);
       }).row();
     }
   });

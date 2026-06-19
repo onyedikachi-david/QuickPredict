@@ -3,6 +3,7 @@ import { getOrCreateUser } from "../../db/users";
 import { getActiveOracles } from "../../predict/registry";
 import { getNetworkConfig } from "../../config/network";
 import { InlineKeyboard } from "grammy";
+import { replyRich } from "../../helpers/rich-message";
 
 /**
  * Brief welcome. Heavy lifting (commands, glossary) lives in /help; wallet setup
@@ -30,24 +31,28 @@ export async function startCommand(ctx: Context) {
     .join("  ·  ");
 
   let message =
-    `⚡ <b>QuickPredict</b> <i>(${net})</i>\n` +
-    `Quick up/down bets on crypto prices.\n` +
-    `Built on DeepBook Predict (Sui).\n\n`;
+    `<h1>QuickPredict</h1>` +
+    `<p><i>${net}</i></p>` +
+    `<p>Quick up/down bets on crypto prices. Built on DeepBook Predict on Sui.</p>`;
 
   if (isNewUser) {
     message +=
-      `<b>New here? 3 steps:</b>\n` +
-      `1. /wallet — make your wallet (only you hold the keys)\n` +
-      `2. Add ${net} SUI for fees and dUSDC to trade with\n` +
-      `3. /markets — place your first trade\n\n` +
-      `New to this? /help explains every term in plain English.\n\n`;
+      `<h2>Start in 3 Steps</h2>` +
+      `<ol>` +
+      `<li>/wallet - make your wallet. Only you hold the keys.</li>` +
+      `<li>Add ${net} SUI for fees and dUSDC to trade with.</li>` +
+      `<li>/markets - place your first trade.</li>` +
+      `</ol>` +
+      `<blockquote>New to this? /help explains every term in plain English.</blockquote>`;
   }
 
-  message += `<b>Markets:</b> ${assetPrices || "none active"}\n\n`;
+  message += `<h2>Markets</h2><p>${assetPrices || "none active"}</p>`;
   message +=
-    `• /markets — browse and trade\n` +
-    `• /account — your full overview\n` +
-    `• /help — all commands and glossary`;
+    `<ul>` +
+    `<li>/markets - browse and trade</li>` +
+    `<li>/account - your full overview</li>` +
+    `<li>/help - all commands and glossary</li>` +
+    `</ul>`;
 
   const keyboard = new InlineKeyboard()
     .text("📊 Markets", "cmd_markets")
@@ -56,7 +61,7 @@ export async function startCommand(ctx: Context) {
     .text("🏆 Leaderboard", "cmd_leaderboard")
     .text("❓ Help", "cmd_help");
 
-  return ctx.reply(message, { reply_markup: keyboard });
+  return replyRich(ctx, message, { reply_markup: keyboard });
 }
 
 /**
@@ -68,46 +73,58 @@ export async function helpCommand(ctx: Context) {
   const net = getNetworkConfig().network;
 
   const message =
-    `❓ <b>QuickPredict Help</b> <i>(${net})</i>\n\n` +
-    `<b>Getting started</b>\n` +
-    `/start — home\n` +
-    `/wallet — create &amp; fund your wallet\n` +
-    `/account — full account overview\n` +
-    `/balance — quick balance check\n\n` +
-    `<b>Trading</b>\n` +
-    `/markets — browse markets and build a trade\n` +
-    `/up — bet a price ends <b>above</b> a strike  ·  <code>/up BTC 71000 10 100</code>\n` +
-    `/down — bet a price ends <b>below</b> a strike  ·  <code>/down BTC 70000 15 50</code>\n` +
-    `/range — bet a price lands <b>inside a band</b>  ·  <code>/range BTC 70000 72000 15 100</code>\n` +
-    `/status — your open positions\n` +
-    `<i>(args: ASSET strike minutes amount — or just type the command for menus)</i>\n\n` +
-    `<b>Money</b>\n` +
-    `/swap — swap SUI ⇄ dUSDC\n` +
-    `/claim — move settled winnings to your wallet\n` +
-    `/withdraw — send SUI or dUSDC to another address\n\n` +
-    `<b>Social</b>\n` +
-    `/leaderboard — top traders\n` +
-    `/copy @user — mirror another trader\n` +
-    `/tournament — group competitions\n\n` +
-    `<b>New to trading?</b> Tap to expand the glossary:\n` +
-    `<blockquote expandable>` +
-    `<b>Binary option</b> — a yes/no bet: you pick UP or DOWN on a price by a deadline. Right → you get paid; wrong → you lose only what you paid.\n\n` +
-    `<b>Strike</b> — the price line your bet is measured against. "UP $71,000" wins if the price is above $71,000 at expiry.\n\n` +
-    `<b>Expiry</b> — the deadline. The trade settles at this time using the price right then.\n\n` +
-    `<b>Premium</b> — what the trade costs you up front. Longer-shot bets cost less.\n\n` +
-    `<b>Max payout (notional)</b> — the most you can win (your chosen size). Net profit = payout − premium.\n\n` +
-    `<b>Range option</b> — bet the price ends up between two strikes (a band). Pays out if it lands inside.\n\n` +
-    `<b>ITM / OTM</b> — "in the money" = your bet is currently winning; "out of the money" = currently losing.\n\n` +
-    `<b>Settlement</b> — when the market closes at expiry and the final price decides winners and losers.\n\n` +
-    `<b>Implied probability</b> — the market's estimated chance your bet wins; it sets the premium.\n\n` +
-    `<b>Collateral (dUSDC)</b> — the test stablecoin you trade with. Premiums are paid in dUSDC.\n\n` +
-    `<b>Gas (SUI)</b> — a tiny network fee (in SUI) for each on-chain action. Keep a little SUI in your wallet.\n\n` +
-    `<b>Non-custodial wallet</b> — your keys, your funds. The bot encrypts your key with your password and never holds your money.\n\n` +
-    `<b>Trading account</b> — your on-chain account (a "PredictManager") that holds collateral and your open positions.\n\n` +
-    `<b>Claim</b> — moving settled winnings from your trading account back to your wallet (/claim).\n\n` +
-    `<b>Realized vs unrealized PnL</b> — realized = profit/loss on closed trades; unrealized = paper profit/loss on trades still open.\n\n` +
-    `<b>Copy trading</b> — automatically mirror another trader's positions.` +
-    `</blockquote>`;
+    `<h1>QuickPredict Help</h1>` +
+    `<p><i>${net}</i></p>` +
+    `<h2>Getting Started</h2>` +
+    `<ul>` +
+    `<li>/start - home</li>` +
+    `<li>/wallet - create and fund your wallet</li>` +
+    `<li>/account - full account overview</li>` +
+    `<li>/balance - quick balance check</li>` +
+    `</ul>` +
+    `<h2>Trading</h2>` +
+    `<ul>` +
+    `<li>/markets - browse markets and build a trade</li>` +
+    `<li>/up - bet a price ends <b>above</b> a strike. <code>/up BTC 71000 10 100</code></li>` +
+    `<li>/down - bet a price ends <b>below</b> a strike. <code>/down BTC 70000 15 50</code></li>` +
+    `<li>/range - bet a price lands <b>inside a band</b>. <code>/range BTC 70000 72000 15 100</code></li>` +
+    `<li>/status - your open positions</li>` +
+    `</ul>` +
+    `<blockquote>Command args are ASSET, strike, minutes, amount. You can also type the command without args to use menus.</blockquote>` +
+    `<h2>Money</h2>` +
+    `<ul>` +
+    `<li>/swap - swap SUI and dUSDC</li>` +
+    `<li>/claim - move settled winnings to your wallet</li>` +
+    `<li>/withdraw - send SUI or dUSDC to another address</li>` +
+    `</ul>` +
+    `<h2>Social</h2>` +
+    `<ul>` +
+    `<li>/leaderboard - top traders</li>` +
+    `<li>/copy @user - mirror another trader</li>` +
+    `<li>/tournament - group competitions</li>` +
+    `</ul>` +
+    `<details>` +
+    `<summary>New to trading? Glossary</summary>` +
+    `<h3>Core Terms</h3>` +
+    `<ul>` +
+    `<li><b>Binary option</b> - a yes/no bet: you pick UP or DOWN on a price by a deadline. Right means you get paid; wrong means you lose only what you paid.</li>` +
+    `<li><b>Strike</b> - the price line your bet is measured against. "UP $71,000" wins if the price is above $71,000 at expiry.</li>` +
+    `<li><b>Expiry</b> - the deadline. The trade settles at this time using the price right then.</li>` +
+    `<li><b>Premium</b> - what the trade costs you up front. Longer-shot bets cost less.</li>` +
+    `<li><b>Max payout</b> - the most you can win. Net profit equals payout minus premium.</li>` +
+    `<li><b>Range option</b> - bet the price ends up between two strikes. Pays out if it lands inside.</li>` +
+    `<li><b>Settlement</b> - when the market closes and the final price decides winners and losers.</li>` +
+    `</ul>` +
+    `<h3>Account Terms</h3>` +
+    `<ul>` +
+    `<li><b>Collateral</b> - dUSDC, the test stablecoin used to pay premiums.</li>` +
+    `<li><b>Gas</b> - a tiny SUI network fee for each on-chain action.</li>` +
+    `<li><b>Non-custodial wallet</b> - your keys, your funds. The bot encrypts your key with your password and never holds your money.</li>` +
+    `<li><b>Trading account</b> - your on-chain PredictManager account that holds collateral and open positions.</li>` +
+    `<li><b>Claim</b> - moving settled winnings from your trading account back to your wallet.</li>` +
+    `<li><b>Copy trading</b> - automatically mirror another trader's positions.</li>` +
+    `</ul>` +
+    `</details>`;
 
-  return ctx.reply(message, { link_preview_options: { is_disabled: true } });
+  return replyRich(ctx, message);
 }

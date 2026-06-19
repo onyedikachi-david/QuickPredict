@@ -11,6 +11,7 @@ import {
   tournamentCommand,
   shareCommand,
 } from "./social.service";
+import { replyRich } from "../../helpers/rich-message";
 
 const composer = new Composer<Context>();
 
@@ -21,59 +22,60 @@ composer.command(
   "leaderboard",
   handleLogMiddleware("leaderboard-command"),
   chatAction("typing"),
-  leaderboardCommand
+  leaderboardCommand,
 );
 
 composer.command(
   "groupleaderboard",
   handleLogMiddleware("groupleaderboard-command"),
   chatAction("typing"),
-  groupLeaderboardCommand
+  groupLeaderboardCommand,
 );
 
 composer.command(
   "copy",
   handleLogMiddleware("copy-command"),
   chatAction("typing"),
-  copyCommand
+  copyCommand,
 );
 
 composer.command(
   "uncopy",
   handleLogMiddleware("uncopy-command"),
   chatAction("typing"),
-  uncopyCommand
+  uncopyCommand,
 );
 
 composer.command(
   "copyboard",
   handleLogMiddleware("copyboard-command"),
   chatAction("typing"),
-  copyboardCommand
+  copyboardCommand,
 );
 
 composer.command(
   "tournament",
   handleLogMiddleware("tournament-command"),
   chatAction("typing"),
-  tournamentCommand
+  tournamentCommand,
 );
 
 composer.command(
   "share",
   handleLogMiddleware("share-command"),
   chatAction("typing"),
-  shareCommand
+  shareCommand,
 );
 
 // Callback handlers for copy trading
 composer.callbackQuery("cmd_copy_me", async (ctx) => {
   await ctx.answerCallbackQuery();
-  return ctx.reply(
-    `👥 <b>Copy Trading</b>\n\n` +
-      `Share your username with others so they can copy your trades:\n\n` +
-      `<code>/copy @${ctx.from?.username || "your_username"}</code>\n\n` +
-      `See /copyboard for top traders.`
+  return replyRich(
+    ctx,
+    `<h1>Copy Trading</h1>` +
+      `<p>Share your username with others so they can copy your trades:</p>` +
+      `<p><code>/copy @${ctx.from?.username || "your_username"}</code></p>` +
+      `<p>See /copyboard for top traders.</p>`,
   );
 });
 
@@ -84,7 +86,7 @@ composer.callbackQuery(/^share_/, async (ctx) => {
 
 composer.callbackQuery("cmd_markets", async (ctx) => {
   await ctx.answerCallbackQuery();
-  return ctx.reply("Use /markets to view all active markets");
+  return replyRich(ctx, `<p>Use /markets to view all active markets</p>`);
 });
 
 export { composer as socialModule };

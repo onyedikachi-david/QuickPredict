@@ -18,6 +18,7 @@ import {
   tradeBuilderStrikeMenu,
   tradeBuilderRangeLowerMenu,
 } from "./trade-builder.service";
+import { editRich, replyRich } from "../../helpers/rich-message";
 
 // Format oracle grid hints
 function formatGridHint(oracle: any): string {
@@ -41,12 +42,12 @@ export async function generateMarketsMessage(ctx: Context) {
   const price = await getCurrentPrice(activeAsset);
   const assetStale = assetOracles.some((oracle) => oracle.stale);
 
-  let message = `📊 <b>Markets · ${activeAsset}</b>\n`;
-  message += `Spot <code>$${formatPrice(price || 0)}</code>\n`;
+  let message = `<h1>Markets</h1><p><b>${activeAsset}</b></p>`;
+  message += `<p>Spot <code>$${formatPrice(price || 0)}</code></p>`;
   if (assetStale) {
-    message += `⚠️ <i>Feeds delayed — showing last known price.</i>\n`;
+    message += `<blockquote>Feeds delayed. Showing last known price.</blockquote>`;
   }
-  message += `\nPick an expiry to start a trade.`;
+  message += `<p>Pick an expiry to start a trade.</p>`;
 
   return message;
 }
@@ -60,10 +61,13 @@ export async function generateMarketDetailMessage(ctx: Context) {
 
   const minutes = Math.round((oracle.expiry_ts - Date.now()) / 60000);
 
-  let msg = `<b>${tb.asset} · ${formatDuration(minutes)} expiry</b>\n\n`;
-  msg += `Spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}\n`;
-  msg += `Grid <code>${formatGridHint(oracle)}</code>\n\n`;
-  msg += `Choose a direction.`;
+  let msg = `<h1>${tb.asset}</h1>`;
+  msg += `<p><b>${formatDuration(minutes)} expiry</b></p>`;
+  msg += `<ul>`;
+  msg += `<li>Spot <code>$${formatPrice(oracle.current_price)}</code>${formatStaleMarker(oracle)}</li>`;
+  msg += `<li>Grid <code>${formatGridHint(oracle)}</code></li>`;
+  msg += `</ul>`;
+  msg += `<p>Choose a direction.</p>`;
   return msg;
 }
 
@@ -87,10 +91,11 @@ export const marketsDetailMenu = new Menu<Context>("markets-detail")
       await ctx.deleteMessage();
     } catch (e) {}
 
-    await ctx.reply(
-      `<b>Strike price</b>\n` +
-      `${tb.asset} · Up · ${formatDuration(tb.minutes)}\n\n` +
-      `Select a strike.`,
+    await replyRich(
+      ctx,
+      `<h1>Strike Price</h1>` +
+        `<p>${tb.asset} · Up · ${formatDuration(tb.minutes)}</p>` +
+        `<p>Select a strike.</p>`,
       { reply_markup: tradeBuilderStrikeMenu }
     );
   })
@@ -108,10 +113,11 @@ export const marketsDetailMenu = new Menu<Context>("markets-detail")
       await ctx.deleteMessage();
     } catch (e) {}
 
-    await ctx.reply(
-      `<b>Strike price</b>\n` +
-      `${tb.asset} · Down · ${formatDuration(tb.minutes)}\n\n` +
-      `Select a strike.`,
+    await replyRich(
+      ctx,
+      `<h1>Strike Price</h1>` +
+        `<p>${tb.asset} · Down · ${formatDuration(tb.minutes)}</p>` +
+        `<p>Select a strike.</p>`,
       { reply_markup: tradeBuilderStrikeMenu }
     );
   })
@@ -130,17 +136,18 @@ export const marketsDetailMenu = new Menu<Context>("markets-detail")
       await ctx.deleteMessage();
     } catch (e) {}
 
-    await ctx.reply(
-      `<b>Lower bound</b>\n` +
-      `${tb.asset} · Range · ${formatDuration(tb.minutes)}\n\n` +
-      `Select the lower strike.`,
+    await replyRich(
+      ctx,
+      `<h1>Lower Bound</h1>` +
+        `<p>${tb.asset} · Range · ${formatDuration(tb.minutes)}</p>` +
+        `<p>Select the lower strike.</p>`,
       { reply_markup: tradeBuilderRangeLowerMenu }
     );
   })
   .row()
   .back("← Markets", async (ctx) => {
     const text = await generateMarketsMessage(ctx);
-    await ctx.editMessageText(text);
+    await editRich(ctx, text);
   });
 
 // Main Markets Menu
@@ -159,7 +166,7 @@ export const marketsMenu = new Menu<Context>("markets-main")
       range.text(label, async (ctx) => {
         ctx.session.marketsActiveAsset = asset;
         const text = await generateMarketsMessage(ctx);
-        await ctx.editMessageText(text);
+        await editRich(ctx, text);
       });
     }
     range.row();
@@ -181,7 +188,7 @@ export const marketsMenu = new Menu<Context>("markets-main")
         };
 
         const text = await generateMarketDetailMessage(ctx);
-        await ctx.editMessageText(text);
+        await editRich(ctx, text);
         await ctx.menu.nav("markets-detail");
       }).row();
     }
@@ -206,21 +213,22 @@ export async function generateStatusMessage(ctx: Context) {
   // Unified balance: spendable wallet + on-chain Trading Account (manager).
   const managerId = getUserManagerId(telegramId);
   const summary = managerId ? await fetchManagerSummary(managerId) : null;
-  let balanceFooter = `<b>Balances</b>\n• Wallet <code>${formatDusdc(user.dusdc_balance)} dUSDC</code>`;
+  let balanceFooter = `<h2>Balances</h2><ul><li>Wallet <code>${formatDusdc(user.dusdc_balance)} dUSDC</code></li>`;
   if (summary) {
-    balanceFooter += `\n• Trading account <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}`;
+    balanceFooter += `<li>Trading account <code>${formatDusdc(summary.trading_balance)} dUSDC</code>${summary.trading_balance > 0 ? " · /claim" : ""}</li>`;
   }
+  balanceFooter += `</ul>`;
 
   if (positions.length === 0) {
     return (
-      `💼 <b>Open positions</b>\n\n` +
-      `No open positions.\n\n` +
-      `${balanceFooter}\n\n` +
-      `Use /markets to open a trade.`
+      `<h1>Open Positions</h1>` +
+      `<p>No open positions.</p>` +
+      `${balanceFooter}` +
+      `<p>Use /markets to open a trade.</p>`
     );
   }
 
-  let message = `💼 <b>Open positions</b>\n\n`;
+  let message = `<h1>Open Positions</h1>`;
 
   for (const pos of positions) {
     const oracle = await getOracleById(pos.oracle_id);
@@ -242,8 +250,8 @@ export async function generateStatusMessage(ctx: Context) {
     }
 
     message +=
-      `${dot} ${label}\n` +
-      `${state} · ${formatDuration(timeLeft)} left · premium <code>${formatDusdc(pos.premium_dusdc)} dUSDC</code>${formatStaleMarker(oracle)}\n\n`;
+      `<p>${dot} ${label}<br>` +
+      `${state} · ${formatDuration(timeLeft)} left · premium <code>${formatDusdc(pos.premium_dusdc)} dUSDC</code>${formatStaleMarker(oracle)}</p>`;
   }
 
   message += balanceFooter;
@@ -258,11 +266,11 @@ export const statusMenu = new Menu<Context>("status-main")
   .text("🔄 Refresh", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Refreshing…" });
     const text = await generateStatusMessage(ctx);
-    await ctx.editMessageText(text);
+    await editRich(ctx, text);
   })
   .text("Settle expired", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Checking settlement…" });
     await checkAndSettlePositions(ctx);
     const text = await generateStatusMessage(ctx);
-    await ctx.editMessageText(text);
+    await editRich(ctx, text);
   });
