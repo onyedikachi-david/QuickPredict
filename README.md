@@ -4,10 +4,16 @@
 
 One command to trade. Non-custodial by design.
 
-[**QuickPredict**](https://github.com/onyedikachi/QuickPredict)
+[**QuickPredict**](https://github.com/onyedikachi-david/QuickPredict)
 
 ![Status](https://img.shields.io/badge/status-testnet-E8590C)
 ![Bot](https://img.shields.io/badge/bot-MIT-2F6FED)
+
+[![Website](https://img.shields.io/badge/website-live-059669)](https://onyedikachi-david.github.io/QuickPredict/)
+
+<a href="https://onyedikachi-david.github.io/QuickPredict/">
+  <img src="docs/preview.png" alt="QuickPredict Landing Page" width="720" />
+</a>
 
 </div>
 
